@@ -2950,7 +2950,7 @@ runs:
           else
             KSU_COMMIT_BASE_URL=""
           fi
-          echo "| **KSU Source** | \`$KSU_SOURCE\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **KSU Source** | \`$KSU_SOURCE\` |"
           if [ "$KSU_SHA" != "unknown" ] && [ -n "$KSU_COMMIT_BASE_URL" ]; then
             echo "| **KSU Commit** | [\`${KSU_SHA:0:8}\`]($KSU_COMMIT_BASE_URL/commit/$KSU_SHA) |"
           elif [ "$KSU_SHA" != "unknown" ]; then
