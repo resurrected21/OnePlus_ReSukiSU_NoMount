@@ -1344,7 +1344,7 @@ runs:
             exit 1
             ;;
         esac
-                cd "$COMMON_KERNEL_FOLDER"
+        cd "$COMMON_KERNEL_FOLDER"
         if [ "${{ env.ANDROID_VER }}" = "android15" ] && [ "${{ env.KERNEL_VER }}" = "6.6" ]; then
           if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
             sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c
@@ -2939,12 +2939,22 @@ runs:
             echo "| **KSU Version** | ${KSUVER:-unknown} |"
           fi
           
-          if [ "$KSU_SHA" != "unknown" ]; then
-            if [ "${{ inputs.ksu_type }}" = "ReSukiSU" ]; then
-              echo "| **ReSukiSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/ReSukiSU/ReSukiSU/commit/$KSU_SHA) |"
-            else
-              echo "| **KSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/tiann/KernelSU/commit/$KSU_SHA) |"
-            fi
+          if [ "${{ inputs.ksu_type }}" = "ReSukiSU" ]; then
+            KSU_COMMIT_BASE_URL="https://github.com/ReSukiSU/ReSukiSU"
+          elif [[ "$KSU_SOURCE" == pershoot/KernelSU-Next@* ]]; then
+            KSU_COMMIT_BASE_URL="https://github.com/pershoot/KernelSU-Next"
+          elif [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+            KSU_COMMIT_BASE_URL="https://github.com/KernelSU-Next/KernelSU-Next"
+          elif [ "${{ inputs.ksu_type }}" = "KSU" ]; then
+            KSU_COMMIT_BASE_URL="https://github.com/tiann/KernelSU"
+          else
+            KSU_COMMIT_BASE_URL=""
+          fi
+          echo "| **KSU Source** | \`$KSU_SOURCE\` |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$KSU_SHA" != "unknown" ] && [ -n "$KSU_COMMIT_BASE_URL" ]; then
+            echo "| **KSU Commit** | [\`${KSU_SHA:0:8}\`]($KSU_COMMIT_BASE_URL/commit/$KSU_SHA) |"
+          elif [ "$KSU_SHA" != "unknown" ]; then
+            echo "| **KSU Commit** | \`${KSU_SHA:0:8}\` |"
           else
             echo "| **KSU Commit** | unknown |"
           fi
