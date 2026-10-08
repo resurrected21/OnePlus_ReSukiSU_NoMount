@@ -1164,7 +1164,21 @@ runs:
               echo "ℹ️ Skipping KernelSU folder patch for ReSukiSU"
             fi
             ;;
-          "v2.2.0")
+          "v2.2.0"|"v2.3.0")
+            # The upstream kernel_patches repo currently has no v2.3.0
+            # KernelSU compatibility-fix directory. Reuse v2.2.0 fixes only
+            # when no version-specific directory exists, and still require
+            # every patch to apply cleanly below.
+            susfs_patch_version="$susfs_version"
+            if [ ! -d "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_patch_version" ]; then
+              if [ "$susfs_version" = "v2.3.0" ] && [ -d "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/v2.2.0" ]; then
+                susfs_patch_version="v2.2.0"
+                echo "::warning::No v2.3.0 SUSFS compatibility-fix set found; using v2.2.0 KernelSU compatibility fixes. Patch application must still succeed."
+              else
+                echo "::error::No KernelSU compatibility-fix set found for SUSFS $susfs_version"
+                exit 1
+              fi
+            fi
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
               cd "$KSUN_FOLDER"
               susfs_ksun_patch="$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
@@ -1222,7 +1236,7 @@ runs:
                 -e 's|^    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set $|    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set|' \
                 "$init_source"
               for compatibility_patch in fix_Kbuild.patch fix_init.c.patch fix_kernel_umount.c.patch fix_setuid_hook.c.patch fix_sucompat.c.patch fix_supercall.c.patch; do
-                patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/$compatibility_patch"
+                patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_patch_version/$compatibility_patch"
               done
               # Filtering the upstream SUSFS patch skips its local sucompat
               # helper and imports. Restore those exact dependencies here.
@@ -1250,13 +1264,13 @@ runs:
                 { print }
               ' "$sucompat_source" > "$tmp_sucompat"
               mv "$tmp_sucompat" "$sucompat_source"
-              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/overwrite_hook_mode.patch"
-              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/ksu_toolkit.patch"
+              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_patch_version/overwrite_hook_mode.patch"
+              patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_patch_version/ksu_toolkit.patch"
             elif [ "${{ inputs.ksu_type }}" = "KSU" ]; then
               cd "$KSU_FOLDER"
               susfs_ksu_patch="$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
               filtered_susfs_patch="$(mktemp)"
-              # SUSFS v2.2.0 targets the pre-v3.2 KernelSU hook architecture.
+              # Keep KernelSU v3.2.5 modern hooks and late-load behavior intact.
               # Keep v3.2.5's modern hook and late-load implementation intact.
               awk '
                 /^diff --git a\/kernel\/(Kbuild|Kconfig|core\/init\.c|feature\/kernel_umount\.c|feature\/sucompat\.c|feature\/sucompat\.h|hook\/setuid_hook\.c|sulog\/event\.c|sulog\/event\.h|supercall\/supercall\.c) b\// { skip = 1; next }
