@@ -44,9 +44,9 @@ on:
           - KSU
         default: KSUN
       ksu_branch_or_hash:
-        description: 'KSU branch or commit hash'
+        description: 'KSU branch/tag/hash. For KSUN + SUSFS v2.3.0, the build selects the latest compatible pershoot/dev-susfs commit automatically.'
         type: string
-        default: 'v3.3.0'
+        default: 'v3.4.0'
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -72,23 +72,23 @@ on:
         type: string
         default: ''
       android12-5_10_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android12-5.10'
+        description: 'Leave blank to use the latest commit on gki-android12-5.10, or enter a branch/commit'
         type: string
         default: ''
       android13-5_15_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android13-5.15'
+        description: 'Leave blank to use the latest commit on gki-android13-5.15, or enter a branch/commit'
         type: string
         default: ''
       android14-6_1_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android14-6.1'
+        description: 'Leave blank to use the latest commit on gki-android14-6.1, or enter a branch/commit'
         type: string
         default: ''
       android15-6_6_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android15-6.6'
+        description: 'Leave blank to use the latest commit on gki-android15-6.6, or enter a branch/commit'
         type: string
         default: ''
       android16-6_12_susfs_branch_or_commit:
-        description: 'Enter SusFS Branch or commit hash for android16-6.12'
+        description: 'Leave blank to use the latest commit on gki-android16-6.12, or enter a branch/commit'
         type: string
         default: ''
 
