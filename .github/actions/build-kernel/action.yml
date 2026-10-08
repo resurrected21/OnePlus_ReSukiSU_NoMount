@@ -1054,7 +1054,7 @@ runs:
           if [ -n "$REQUESTED_KSU_INPUT" ] && [ "$REQUESTED_KSU_INPUT" != "v3.3.0" ]; then
             echo "::warning::The requested KSUN ref ($REQUESTED_KSU_INPUT) is overridden for SUSFS v2.3.0; using the compatible dev-susfs branch."
           fi
-          KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')"
+          KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')" || true
           if [[ ! "$KSU_INPUT" =~ ^[[:xdigit:]]{40}$ ]]; then
             echo "::error::Could not resolve pershoot/KernelSU-Next dev-susfs to a commit SHA"
             exit 1
@@ -1062,7 +1062,7 @@ runs:
           echo "Using pershoot/KernelSU-Next commit: $KSU_INPUT"
           echo "KSU_SOURCE_REF=pershoot/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
           curl --fail --location --proto '=https' -LSs \
-            "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" \
+            "https://raw.githubusercontent.com/pershoot/KernelSU-Next/$KSU_INPUT/kernel/setup.sh" \
             | bash -s "$KSU_INPUT"
         else
           KSU_INPUT="$REQUESTED_KSU_INPUT"
