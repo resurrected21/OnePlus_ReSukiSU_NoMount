@@ -782,11 +782,11 @@ runs:
           local archive_name="${repo_name}.tar.gz"
           local archive_path="/dev/shm/$archive_name"
           local download_url=""
+          local resolved_sha=""
+          local archive_ref="$ref"
 
           case "$url" in
             https://gitlab.com/simonpunk/susfs4ksu.git)
-              # GitLab archive API supports branch names and explicit commit SHAs.
-              download_url="https://gitlab.com/api/v4/projects/simonpunk%2Fsusfs4ksu/repository/archive.tar.gz?sha=$(jq -rn --arg ref "$ref" '$ref | @uri')"
               ;;
             *)
               echo "::error::Unsupported repository for archive fetch: $url"
@@ -795,9 +795,30 @@ runs:
               ;;
           esac
 
-          echo "📥 Fetching SUSFS ref: $ref"
+          # Resolve branches/tags before downloading so the archive is pinned to
+          # the exact commit reported later in the build summary.
+          if [[ "$ref" =~ ^[[:xdigit:]]{40}$ ]]; then
+            resolved_sha="${ref,,}"
+          else
+            resolved_sha="$(git ls-remote "$url" "refs/heads/$ref" 2>/dev/null | awk 'NR==1 {print $1}')" || true
+            if [ -z "$resolved_sha" ]; then
+              resolved_sha="$(git ls-remote "$url" "refs/tags/$ref^{}" 2>/dev/null | awk 'NR==1 {print $1}')" || true
+            fi
+            if [ -z "$resolved_sha" ]; then
+              resolved_sha="$(git ls-remote "$url" "refs/tags/$ref" 2>/dev/null | awk 'NR==1 {print $1}')" || true
+            fi
+            [ -z "$resolved_sha" ] || archive_ref="$resolved_sha"
+          fi
 
-          # Prefer aria2c, then fall back to curl.
+          download_url="https://gitlab.com/api/v4/projects/simonpunk%2Fsusfs4ksu/repository/archive.tar.gz?sha=$(jq -rn --arg ref "$archive_ref" '$ref | @uri')"
+          echo "📥 Fetching SUSFS ref: $ref"
+          if [ -n "$resolved_sha" ]; then
+            echo "Resolved SUSFS commit: $resolved_sha"
+          else
+            echo "::warning::Could not resolve SUSFS ref to a commit before archive download"
+          fi
+
+          # Prefer aria2c for parallel downloading, then fall back to curl.
           if command -v aria2c >/dev/null 2>&1; then
             if aria2c \
                 --allow-overwrite=true \
@@ -813,13 +834,17 @@ runs:
                 rm -rf "$repo_name"
                 mv "$temp_dir" "$repo_name"
                 rm -f "$archive_path"
+                echo "SUSFS_COMMIT_SHA=${resolved_sha:-unknown}" >> "$GITHUB_ENV"
                 echo "✅ SUSFS archive downloaded and extracted with aria2c"
                 return 0
               fi
             fi
           fi
 
+          # Avoid mixing partial extraction contents with the curl retry.
           rm -f "$archive_path"
+          rm -rf "$temp_dir"
+          temp_dir="$(mktemp -d)"
           echo "⚠️ aria2c archive fetch failed; trying curl..."
           if curl --fail --location --silent --show-error \
               --retry 3 --retry-delay 3 --connect-timeout 30 \
@@ -829,6 +854,7 @@ runs:
             rm -rf "$repo_name"
             mv "$temp_dir" "$repo_name"
             rm -f "$archive_path"
+            echo "SUSFS_COMMIT_SHA=${resolved_sha:-unknown}" >> "$GITHUB_ENV"
             echo "✅ SUSFS archive downloaded and extracted with curl"
             return 0
           fi
@@ -837,7 +863,8 @@ runs:
           rm -rf "$temp_dir"
           echo "⚠️ Archive downloads failed; falling back to Git..."
 
-          # Fetch branches or explicit commit SHAs and record the resolved SHA.
+          # Git fallback can fetch a branch or an explicit commit and captures
+          # the actual checked-out SHA for the build summary.
           temp_dir="$(mktemp -d)"
           while [ "$attempt" -le "$max_attempts" ]; do
             echo "🔄 Git fallback attempt $attempt/$max_attempts for SUSFS ref: $ref"
@@ -933,7 +960,7 @@ runs:
             echo "::error::Failed to fetch SUSFS archive after multiple attempts"
             exit 1
           fi
-          echo "SUSFS_COMMIT_SHA=$SUSFS_BRANCH" >> $GITHUB_ENV
+          # retry_fetch_archive records the resolved commit SHA on success.
         fi
         echo "✅ Dependencies cloned"
         echo "::endgroup::"
