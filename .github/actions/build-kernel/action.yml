@@ -389,10 +389,18 @@ runs:
         rm -f "$DIAG_DIR"/*
         printf '%s\n' "tag=$GKI_TAG" "branch=$ONEPLUS_BRANCH" > "$DIAG_DIR/port-request.txt"
 
-        if [[ "$GKI_TAG" != "android13-5.15-2026-09_r2" ]]; then
-          echo "::error::This validation path is pinned to android13-5.15-2026-09_r2."
-          exit 1
-        fi
+        case "$GKI_TAG" in
+          android13-5.15-2026-09_r2)
+            EXPECTED_GKI_SHA_PREFIX="703571a1a1618be8e370"
+            ;;
+          ASB-2026-10-05_13-5.15)
+            EXPECTED_GKI_SHA_PREFIX="d2101e7384ec08fe13cc9faf5eccaa6a84048ac9"
+            ;;
+          *)
+            echo "::error::Unsupported Android 13 / 5.15 source tag: $GKI_TAG"
+            exit 1
+            ;;
+        esac
         if [[ "$OP_MODEL" != "OP12r" || "$OP_OS_VERSION" != "OOS16" || "$OP_ANDROID_VERSION" != "android13" || "$OP_KERNEL_VERSION" != "5.15" ]]; then
           echo "::error::GKI port is restricted to OP12r / OOS16 / Android 13 / 5.15."
           exit 1
@@ -427,7 +435,7 @@ runs:
           exit 1
         fi
         GKI_SHA="$(git rev-parse "$GKI_TAG^{commit}")"
-        if [[ "$GKI_SHA" != 703571a1a1618be8e370* ]]; then
+        if [[ "$GKI_SHA" != ${EXPECTED_GKI_SHA_PREFIX}* ]]; then
           echo "Fetched tag resolved to unexpected commit: $GKI_SHA" | tee "$DIAG_DIR/gki-sha-check.txt"
           echo "::error::The tag SHA does not match the official release record. Not building."
           exit 1
