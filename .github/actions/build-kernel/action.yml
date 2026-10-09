@@ -948,12 +948,17 @@ runs:
         }
         
         retry_clone "https://github.com/WildKernels/kernel_patches.git" "main" "1"
-        git clone --no-checkout --depth 1 "https://github.com/maxsteeel/nomount.git" nomount
-        git -C nomount fetch --depth 1 origin 1dacddf5d85ced5b6c26ab09e621e366e4f0cd88
-        git -C nomount checkout --detach 1dacddf5d85ced5b6c26ab09e621e366e4f0cd88
-        NOMOUNT_COMMIT_SHA="$(git -C nomount rev-parse HEAD)"
+        # Build NoMount from the current upstream dev branch and pin this run to
+        # the exact commit so the kernel driver can match the NoMount userspace.
+        git clone --no-checkout --depth 1 --branch dev "https://github.com/maxsteeel/nomount.git" nomount
+        NOMOUNT_COMMIT_SHA="$(git -C nomount rev-parse refs/remotes/origin/dev)"
+        if [[ ! "$NOMOUNT_COMMIT_SHA" =~ ^[[:xdigit:]]{40}$ ]]; then
+          echo "::error::Could not resolve maxsteeel/nomount dev to a commit SHA"
+          exit 1
+        fi
+        git -C nomount checkout --detach "$NOMOUNT_COMMIT_SHA"
         echo "NOMOUNT_COMMIT_SHA=$NOMOUNT_COMMIT_SHA" >> "$GITHUB_ENV"
-        echo "Using pinned NoMount dev commit: $NOMOUNT_COMMIT_SHA"
+        echo "Using latest NoMount dev commit (pinned for this build): $NOMOUNT_COMMIT_SHA"
         if [ "${{ env.OP_SUSFS }}" = true ]; then
           echo "Using SUSFS branch/commit: $SUSFS_BRANCH"
           if ! retry_fetch_archive "https://gitlab.com/simonpunk/susfs4ksu.git" "$SUSFS_BRANCH"; then
@@ -1558,75 +1563,64 @@ runs:
         echo "::group::Apply NoMount"
 
         cd "$COMMON_KERNEL_FOLDER"
+        NOMOUNT_SRC="$NOMOUNT_FOLDER/kernel/src"
+        FS_MAKEFILE="$COMMON_KERNEL_FOLDER/fs/Makefile"
+        FS_KCONFIG="$COMMON_KERNEL_FOLDER/fs/Kconfig"
 
-        echo "Copying NoMount source..."
-        cp -av "$NOMOUNT_FOLDER/kernel/src/." "$COMMON_KERNEL_FOLDER/fs/"
-
-        if [ ! -f "$COMMON_KERNEL_FOLDER/fs/nomount.c" ]; then
-          echo "::error::nomount.c was not copied successfully"
-          exit 1
-        fi
-
-        if [ ! -f "$COMMON_KERNEL_FOLDER/fs/nomount.h" ]; then
-          echo "::error::nomount.h was not copied successfully"
-          exit 1
-        fi
-
-        echo "✅ NoMount source copied"
-
-        echo "Listing NoMount kernel directory..."
-        ls -lah "$NOMOUNT_FOLDER/kernel"
-
-        echo ""
-        echo "Listing NoMount patches directory..."
-        ls -lah "$NOMOUNT_FOLDER/kernel/patches"
-
-        echo ""
-        echo "Available NoMount patches:"
-        find "$NOMOUNT_FOLDER/kernel/patches" -maxdepth 1 -type f -name "*.patch" | sort
-
-        case "$KERNEL_VER" in
-          5.10|5.15|6.1|6.6|6.12)
-            NOMOUNT_PATCH="$NOMOUNT_FOLDER/kernel/patches/nomount_${KERNEL_VER}_kernel_integration.patch"
-            ;;
-          *)
-            echo "::error::Unsupported NoMount kernel version: $KERNEL_VER"
+        for required_file in "$NOMOUNT_SRC/nomount.c" "$NOMOUNT_SRC/nomount.h" "$NOMOUNT_SRC/Kconfig" "$NOMOUNT_SRC/Makefile"; do
+          if [ ! -f "$required_file" ]; then
+            echo "::error::Required NoMount source file missing: $required_file"
             exit 1
-            ;;
-        esac
+          fi
+        done
 
-        echo ""
-        echo "Using NoMount patch:"
-        echo "$NOMOUNT_PATCH"
-
-        if [ ! -f "$NOMOUNT_PATCH" ]; then
-          echo "::error::NoMount patch not found: $NOMOUNT_PATCH"
+        # Current upstream NoMount uses fs/nomount/ as a directory with its own
+        # Kconfig and Makefile. Do not use the retired flat fs/nomount.c patch.
+        if [ -e "$COMMON_KERNEL_FOLDER/fs/nomount" ] && [ ! -L "$COMMON_KERNEL_FOLDER/fs/nomount" ]; then
+          echo "::error::fs/nomount already exists and is not a symlink; refusing to overwrite it"
           exit 1
         fi
+        ln -sfn "$(realpath --relative-to="$COMMON_KERNEL_FOLDER/fs" "$NOMOUNT_SRC")" "$COMMON_KERNEL_FOLDER/fs/nomount"
+        echo "✅ Linked current NoMount source: $NOMOUNT_SRC"
 
-        echo "Applying NoMount patch..."
-
-        if ! patch -p1 --forward < "$NOMOUNT_PATCH"; then
-          echo "::error::NoMount patch failed. Dumping all .rej files:"
-          find . -name "*.rej" -exec echo "=== {} ===" \; -exec cat {} \;
-          exit 1
+        if ! grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount/' "$FS_MAKEFILE"; then
+          printf '\n%s\n' 'obj-$(CONFIG_NOMOUNT) += nomount/' >> "$FS_MAKEFILE"
         fi
 
-        echo "✅ NoMount patch applied"
+        if ! grep -qF 'source "fs/nomount/Kconfig"' "$FS_KCONFIG"; then
+          awk '
+            /^endmenu/ { last_match = NR }
+            { lines[NR] = $0 }
+            END {
+              if (!last_match) exit 2
+              for (i = 1; i <= NR; i++) {
+                if (i == last_match) print "source \\"fs/nomount/Kconfig\\""
+                print lines[i]
+              }
+            }
+          ' "$FS_KCONFIG" > "$FS_KCONFIG.tmp" || {
+            rm -f "$FS_KCONFIG.tmp"
+            echo "::error::Could not add NoMount Kconfig entry (no endmenu found)"
+            exit 1
+          }
+          mv "$FS_KCONFIG.tmp" "$FS_KCONFIG"
+        fi
 
-        echo "Adding NoMount configuration..."
-
-        if ! grep -q "^CONFIG_NOMOUNT=y" "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"; then
+        if ! grep -qF 'CONFIG_NOMOUNT=y' "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"; then
           printf '%s\n' 'CONFIG_NOMOUNT=y' >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
         fi
-        echo "NOMOUNT_PATCH_NAME=$(basename "$NOMOUNT_PATCH")" >> "$GITHUB_ENV"
-        printf '%s\n%s\n%s\n' "NoMount" "${NOMOUNT_COMMIT_SHA:-unknown}" "$(basename "$NOMOUNT_PATCH")" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
-        echo "Verifying NoMount files..."
-        ls -l "$COMMON_KERNEL_FOLDER/fs"/nomount*
+        NOMOUNT_PATCH_NAME="upstream-setup-layout"
+        echo "NOMOUNT_PATCH_NAME=$NOMOUNT_PATCH_NAME" >> "$GITHUB_ENV"
+        printf '%s\n%s\n%s\n' "NoMount" "${NOMOUNT_COMMIT_SHA:-unknown}" "$NOMOUNT_PATCH_NAME" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
-        echo "✅ NoMount integration completed"
-
+        test -L "$COMMON_KERNEL_FOLDER/fs/nomount"
+        test -f "$COMMON_KERNEL_FOLDER/fs/nomount/nomount.c"
+        test -f "$COMMON_KERNEL_FOLDER/fs/nomount/Kconfig"
+        grep -qF 'obj-$(CONFIG_NOMOUNT) += nomount/' "$FS_MAKEFILE"
+        grep -qF 'source "fs/nomount/Kconfig"' "$FS_KCONFIG"
+        echo "NoMount source, Kconfig, and Makefile integration verified"
+        echo "NoMount dev commit: ${NOMOUNT_COMMIT_SHA:-unknown}"
         echo "::endgroup::"
 
     - name: Add BBG
@@ -2591,7 +2585,16 @@ runs:
         
         
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
-        
+
+        # Fail before compiling if the requested built-in NoMount option did not
+        # survive Kconfig resolution. Editing gki_defconfig alone is not enough.
+        if ! grep -qx "CONFIG_NOMOUNT=y" "$OUT/.config"; then
+          echo "::error::CONFIG_NOMOUNT=y is missing from the resolved kernel .config"
+          grep -E "^(# )?CONFIG_NOMOUNT" "$OUT/.config" || true
+          exit 1
+        fi
+        echo "✅ Resolved kernel config includes CONFIG_NOMOUNT=y"
+
         KCFLAGS="$KCFLAGS -Wno-error -pipe ${KCFLAGS_EXTRA}"
         KCPPFLAGS="$KCPPFLAGS -DCONFIG_OPTIMIZE_INLINING"
         
@@ -2656,6 +2659,16 @@ runs:
           echo "::endgroup::"
           exit 1
         fi
+
+        # Confirm the latest NoMount implementation was actually compiled into
+        # this kernel; do not publish a kernel that silently lacks the driver.
+        if [ ! -f "$OUT/fs/nomount/nomount.o" ]; then
+          echo "::error::Built-in NoMount object was not produced at $OUT/fs/nomount/nomount.o"
+          grep -E "CONFIG_NOMOUNT" "$OUT/.config" || true
+          tail -n 100 build.log || true
+          exit 1
+        fi
+        echo "✅ Built-in NoMount object verified: $OUT/fs/nomount/nomount.o"
 
         IMG_SIZE=$(stat -c%s "$IMG")
         
