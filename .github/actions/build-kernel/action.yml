@@ -950,7 +950,7 @@ runs:
         retry_clone "https://github.com/WildKernels/kernel_patches.git" "main" "1"
         # Build NoMount from the current upstream dev branch and pin this run to
         # the exact commit so the kernel driver can match the NoMount userspace.
-        git clone --no-checkout --depth 1 --branch dev "https://github.com/maxsteeel/nomount.git" nomount
+        git clone --no-checkout --branch dev "https://github.com/maxsteeel/nomount.git" nomount
         NOMOUNT_COMMIT_SHA="$(git -C nomount rev-parse refs/remotes/origin/dev)"
         if [[ ! "$NOMOUNT_COMMIT_SHA" =~ ^[[:xdigit:]]{40}$ ]]; then
           echo "::error::Could not resolve maxsteeel/nomount dev to a commit SHA"
