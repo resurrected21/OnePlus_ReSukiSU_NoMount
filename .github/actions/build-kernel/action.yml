@@ -1594,7 +1594,7 @@ runs:
             END {
               if (!last_match) exit 2
               for (i = 1; i <= NR; i++) {
-                if (i == last_match) print "source \\"fs/nomount/Kconfig\\""
+                if (i == last_match) print "source \"fs/nomount/Kconfig\""
                 print lines[i]
               }
             }
