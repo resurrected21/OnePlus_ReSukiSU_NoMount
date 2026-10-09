@@ -46,6 +46,11 @@ inputs:
   github_token:
     description: 'GitHub Token'
     required: true
+  upstream_gki_tag:
+    description: 'Optional official Android GKI tag to merge into the OnePlus OP12R common kernel before building; blank leaves the manifest source unchanged'
+    required: false
+    type: string
+    default: ''
 
 outputs:
   kernel_version:
@@ -368,6 +373,146 @@ runs:
         DEBUG_ZIP_NAME="debug_${OP_MODEL}_${OP_OS_VERSION}.zip"
         echo "DEBUG_ZIP_NAME=$DEBUG_ZIP_NAME" >> "$GITHUB_ENV"
 
+    - name: Port OnePlus OP12R common kernel to Android GKI tag
+      if: ${{ inputs.upstream_gki_tag != '' }}
+      shell: bash
+      env:
+        GKI_TAG: ${{ inputs.upstream_gki_tag }}
+        ONEPLUS_COMMON_REPO: https://github.com/resurrected21/android_kernel_common_oneplus_sm8550.git
+        ONEPLUS_BRANCH: oneplus/sm8550_b_16.0.0_oneplus_12r
+        GKI_REMOTE_URL: https://android.googlesource.com/kernel/common.git
+      run: |
+        set -euo pipefail
+
+        DIAG_DIR="$GITHUB_WORKSPACE/op12r-port-diagnostics"
+        mkdir -p "$DIAG_DIR"
+        rm -f "$DIAG_DIR"/*
+        printf '%s\n' "tag=$GKI_TAG" "branch=$ONEPLUS_BRANCH" > "$DIAG_DIR/port-request.txt"
+
+        if [[ "$GKI_TAG" != "android13-5.15-2026-09_r2" ]]; then
+          echo "::error::This validation path is pinned to android13-5.15-2026-09_r2."
+          exit 1
+        fi
+        if [[ "$OP_MODEL" != "OP12r" || "$OP_OS_VERSION" != "OOS16" || "$OP_ANDROID_VERSION" != "android13" || "$OP_KERNEL_VERSION" != "5.15" ]]; then
+          echo "::error::GKI port is restricted to OP12r / OOS16 / Android 13 / 5.15."
+          exit 1
+        fi
+
+        EXPECTED_COMMON="$GITHUB_WORKSPACE/$CONFIG/kernel_platform/common"
+        if [[ "$COMMON_KERNEL_FOLDER" != "$EXPECTED_COMMON" ]]; then
+          echo "::error::Refusing to replace unexpected common-kernel path: $COMMON_KERNEL_FOLDER"
+          exit 1
+        fi
+
+        # The stock archive checkout is replaceable in this validation job. The
+        # exact OnePlus Git branch is cloned with history so Git can calculate
+        # a real three-way merge against Google's tagged GKI source.
+        rm -rf -- "$COMMON_KERNEL_FOLDER"
+        mkdir -p "$(dirname "$COMMON_KERNEL_FOLDER")"
+        if ! git clone --filter=blob:none --no-tags --single-branch --branch "$ONEPLUS_BRANCH" "$ONEPLUS_COMMON_REPO" "$COMMON_KERNEL_FOLDER" > "$DIAG_DIR/clone.log" 2>&1; then
+          cat "$DIAG_DIR/clone.log"
+          echo "::error::Unable to clone the OnePlus OP12R OOS16 common-kernel branch."
+          exit 1
+        fi
+
+        cd "$COMMON_KERNEL_FOLDER"
+        git config user.name "op12r-gki-port-validation"
+        git config user.email "op12r-gki-port-validation@users.noreply.github.com"
+        ONEPLUS_BASE_SHA="$(git rev-parse HEAD)"
+        echo "oneplus_base_sha=$ONEPLUS_BASE_SHA" >> "$DIAG_DIR/port-request.txt"
+
+        if ! git fetch --no-tags "$GKI_REMOTE_URL" "refs/tags/$GKI_TAG:refs/tags/$GKI_TAG" > "$DIAG_DIR/fetch-gki.log" 2>&1; then
+          cat "$DIAG_DIR/fetch-gki.log"
+          echo "::error::Could not fetch the official Android GKI tag."
+          exit 1
+        fi
+        GKI_SHA="$(git rev-parse "$GKI_TAG^{commit}")"
+        if [[ "$GKI_SHA" != 703571a1a1618be8e370* ]]; then
+          echo "Fetched tag resolved to unexpected commit: $GKI_SHA" | tee "$DIAG_DIR/gki-sha-check.txt"
+          echo "::error::The tag SHA does not match the official release record. Not building."
+          exit 1
+        fi
+        MERGE_BASE="$(git merge-base "$ONEPLUS_BASE_SHA" "$GKI_SHA" || true)"
+        if [[ -z "$MERGE_BASE" ]]; then
+          echo "::error::No common ancestor between OnePlus source and official GKI; refusing an unrelated-tree merge."
+          exit 1
+        fi
+        {
+          echo "gki_tag=$GKI_TAG"
+          echo "gki_commit=$GKI_SHA"
+          echo "merge_base=$MERGE_BASE"
+        } >> "$DIAG_DIR/port-request.txt"
+
+        # Deliberately no -Xours/-Xtheirs and no automated conflict stripping.
+        if ! git merge --no-ff --no-edit "$GKI_TAG" > "$DIAG_DIR/merge.log" 2>&1; then
+          cat "$DIAG_DIR/merge.log"
+          git status --short > "$DIAG_DIR/git-status.txt" || true
+          git diff --name-only --diff-filter=U > "$DIAG_DIR/conflicted-files.txt" || true
+          git diff --cc > "$DIAG_DIR/conflict-combined.diff" || true
+          printf '%s\n' "No source tree was copied to the build steps. Review the uploaded diagnostic artifact and resolve each conflict against the OnePlus branch plus the Android GKI tag." > "$DIAG_DIR/README.txt"
+
+          conflict_index=0
+          while IFS= read -r conflict_path; do
+            [[ -n "$conflict_path" ]] || continue
+            conflict_index=$((conflict_index + 1))
+            if (( conflict_index > 100 )); then
+              break
+            fi
+            conflict_dir="$DIAG_DIR/conflicts/$(printf '%04d' "$conflict_index")"
+            mkdir -p "$conflict_dir"
+            printf '%s\n' "$conflict_path" > "$conflict_dir/path.txt"
+            for stage in 1 2 3; do
+              if git cat-file -e ":$stage:$conflict_path" 2>/dev/null; then
+                stage_file="$conflict_dir/stage-$stage"
+                git show ":$stage:$conflict_path" > "$stage_file" 2>/dev/null || true
+                stage_bytes="$(wc -c < "$stage_file")"
+                if (( stage_bytes <= 524288 )); then
+                  mv "$stage_file" "$stage_file.txt"
+                else
+                  printf 'Skipped %s-byte conflict stage to keep diagnostics small.\n' "$stage_bytes" > "$stage_file.skipped.txt"
+                  rm -f "$stage_file"
+                fi
+              fi
+            done
+          done < "$DIAG_DIR/conflicted-files.txt"
+
+          echo "Conflicted paths: $conflict_index (detailed entries capped at 100)." | tee "$DIAG_DIR/conflict-count.txt"
+          echo "::error::The upstream merge conflicts. The build is intentionally stopped; no conflict strategy was forced."
+          exit 1
+        fi
+
+        MERGE_SHA="$(git rev-parse HEAD)"
+        KERNEL_VERSION="$(awk -F' = ' '/^VERSION = / {v=$2} /^PATCHLEVEL = / {p=$2} /^SUBLEVEL = / {s=$2} END {printf "%s.%s.%s",v,p,s}' Makefile)"
+        if [[ "$KERNEL_VERSION" != "5.15.211" ]]; then
+          cp Makefile "$DIAG_DIR/merged-Makefile.txt"
+          git log --oneline --decorate -n 25 > "$DIAG_DIR/merge-log.txt"
+          echo "::error::Expected Makefile version 5.15.211 after the GKI merge; got $KERNEL_VERSION. Not building."
+          exit 1
+        fi
+        if [[ ! -d include/trace/hooks ]] || ! find include/trace/hooks -type f -print -quit | grep -q .; then
+          echo "::error::Android vendor trace hooks are missing after the merge. Not building."
+          exit 1
+        fi
+
+        git diff --stat "$ONEPLUS_BASE_SHA" "$MERGE_SHA" > "$DIAG_DIR/merge-stat.txt"
+        git diff --check "$ONEPLUS_BASE_SHA" "$MERGE_SHA" > "$DIAG_DIR/diff-check.txt" 2>&1 || true
+        HOOK_COUNT="$(find include/trace/hooks -type f | wc -l | tr -d ' ')"
+        {
+          echo "result=merge-clean"
+          echo "kernel_version=$KERNEL_VERSION"
+          echo "oneplus_base_sha=$ONEPLUS_BASE_SHA"
+          echo "gki_tag=$GKI_TAG"
+          echo "gki_commit=$GKI_SHA"
+          echo "merge_base=$MERGE_BASE"
+          echo "merge_commit=$MERGE_SHA"
+          echo "trace_hook_files=$HOOK_COUNT"
+        } | tee "$DIAG_DIR/port-summary.txt"
+
+        echo "UPSTREAM_GKI_TAG=$GKI_TAG" >> "$GITHUB_ENV"
+        echo "UPSTREAM_GKI_COMMIT=$GKI_SHA" >> "$GITHUB_ENV"
+        echo "UPSTREAM_ONEPLUS_BASE_SHA=$ONEPLUS_BASE_SHA" >> "$GITHUB_ENV"
+        echo "UPSTREAM_GKI_MERGE_SHA=$MERGE_SHA" >> "$GITHUB_ENV"
+
     - name: Set Kernel build-tools to Path
       shell: bash
       run: |
@@ -397,7 +542,7 @@ runs:
         fi
         
         BRANCH_VALUE="${BRANCH_LINE#*=}"
-        ANDROID_VERSION="${BRANCH_VALUE%-*}"
+        ANDROID_VERSION="${BRANCH_VALUE%%-*}"
         
         if [ -z "$ANDROID_VERSION" ]; then
           echo "::error::Could not parse android version from BRANCH=$BRANCH_VALUE"
@@ -2585,6 +2730,21 @@ runs:
         
         
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" olddefconfig
+
+        if [[ "${OP_LTO:-}" == "full" ]] && ! grep -qxF 'CONFIG_LTO_CLANG_FULL=y' "$OUT/.config"; then
+          echo "::error::Full LTO was requested but CONFIG_LTO_CLANG_FULL=y did not survive olddefconfig."
+          grep -E '^(# )?CONFIG_LTO_CLANG_(FULL|THIN|NONE)' "$OUT/.config" || true
+          exit 1
+        fi
+        if [[ -n "${UPSTREAM_GKI_TAG:-}" ]]; then
+          for required_config in CONFIG_MODVERSIONS=y CONFIG_CFI_CLANG=y CONFIG_CFI_CLANG_SHADOW=y CONFIG_ANDROID_VENDOR_HOOKS=y; do
+            if ! grep -qxF "$required_config" "$OUT/.config"; then
+              echo "::error::Stock compatibility setting missing from resolved config: $required_config"
+              grep -E '^(# )?CONFIG_(MODVERSIONS|CFI_CLANG|CFI_CLANG_SHADOW|ANDROID_VENDOR_HOOKS)' "$OUT/.config" || true
+              exit 1
+            fi
+          done
+        fi
 
         # Fail before compiling if the requested built-in NoMount option did not
         # survive Kconfig resolution. Editing gki_defconfig alone is not enough.
