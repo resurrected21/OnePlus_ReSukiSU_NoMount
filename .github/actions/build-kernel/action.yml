@@ -378,11 +378,12 @@ runs:
       shell: bash
       env:
         GKI_TAG: ${{ inputs.upstream_gki_tag }}
-        ONEPLUS_COMMON_REPO: https://github.com/resurrected21/android_kernel_common_oneplus_sm8550.git
+        ONEPLUS_COMMON_REPO: https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8550.git
         ONEPLUS_BRANCH: oneplus/sm8550_b_16.0.0_oneplus_12r
         GKI_REMOTE_URL: https://android.googlesource.com/kernel/common.git
       run: |
         set -euo pipefail
+        echo "UPSTREAM_GKI_PORT_STATUS=failed" >> "$GITHUB_ENV"
 
         DIAG_DIR="$GITHUB_WORKSPACE/op12r-port-diagnostics"
         mkdir -p "$DIAG_DIR"
@@ -417,7 +418,7 @@ runs:
         # a real three-way merge against Google's tagged GKI source.
         rm -rf -- "$COMMON_KERNEL_FOLDER"
         mkdir -p "$(dirname "$COMMON_KERNEL_FOLDER")"
-        if ! git clone --filter=blob:none --no-tags --single-branch --branch "$ONEPLUS_BRANCH" "$ONEPLUS_COMMON_REPO" "$COMMON_KERNEL_FOLDER" > "$DIAG_DIR/clone.log" 2>&1; then
+        if ! git clone --no-tags --single-branch --branch "$ONEPLUS_BRANCH" "$ONEPLUS_COMMON_REPO" "$COMMON_KERNEL_FOLDER" > "$DIAG_DIR/clone.log" 2>&1; then
           cat "$DIAG_DIR/clone.log"
           echo "::error::Unable to clone the OnePlus OP12R OOS16 common-kernel branch."
           exit 1
@@ -457,7 +458,12 @@ runs:
           git status --short > "$DIAG_DIR/git-status.txt" || true
           git diff --name-only --diff-filter=U > "$DIAG_DIR/conflicted-files.txt" || true
           git diff --cc > "$DIAG_DIR/conflict-combined.diff" || true
-          printf '%s\n' "No source tree was copied to the build steps. Review the uploaded diagnostic artifact and resolve each conflict against the OnePlus branch plus the Android GKI tag." > "$DIAG_DIR/README.txt"
+          if [[ ! -s "$DIAG_DIR/conflicted-files.txt" ]]; then
+            printf '%s\\n' "The merge command failed without index conflict entries. Review merge.log and git-status.txt. This is not classified as a source conflict." > "$DIAG_DIR/README.txt"
+            echo "::error::Git merge failed without conflict entries; refusing to build an incomplete source tree."
+            exit 1
+          fi
+          printf '%s\\n' "No source tree was copied to the build steps. Review the uploaded artifact and resolve each file conflict explicitly." > "$DIAG_DIR/README.txt"
 
           conflict_index=0
           while IFS= read -r conflict_path; do
@@ -520,8 +526,10 @@ runs:
         echo "UPSTREAM_GKI_COMMIT=$GKI_SHA" >> "$GITHUB_ENV"
         echo "UPSTREAM_ONEPLUS_BASE_SHA=$ONEPLUS_BASE_SHA" >> "$GITHUB_ENV"
         echo "UPSTREAM_GKI_MERGE_SHA=$MERGE_SHA" >> "$GITHUB_ENV"
+        echo "UPSTREAM_GKI_PORT_STATUS=success" >> "$GITHUB_ENV"
 
     - name: Set Kernel build-tools to Path
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         # Set Kernel build-tools to Path
@@ -530,6 +538,7 @@ runs:
         echo "${KERNEL_PLATFORM_FOLDER}/prebuilts/kernel-build-tools/linux_musl-x86/bin/" >> $GITHUB_PATH
 
     - name: Get Kernel Version Info
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -583,6 +592,7 @@ runs:
         echo "::endgroup::"
 
     - name: 🏷️ Set Build Identity (Hardcoded)
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -601,6 +611,7 @@ runs:
         echo "::endgroup::"
 
     - name: Check or Detect Clang
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         # Check or Detect Clang
@@ -723,7 +734,7 @@ runs:
 
     - name: Check or Detect Rust & bindgen
       shell: bash
-      if: ${{ env.OP_RUST_BUILD == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_RUST_BUILD == 'true') }}
       run: |
         # Check or Detect Rust & bindgen
         set -euo pipefail
@@ -789,7 +800,7 @@ runs:
 
     - name: Install bindgen only (no rustc)
       shell: bash
-      if: ${{ env.OP_RUST_BUILD == 'true'  && !env.BINDGEN_BIN_PATH }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_RUST_BUILD == 'true'  && !env.BINDGEN_BIN_PATH) }}
       run: |
         # Install bindgen via cargo (no full rustc needed)
         set -euo pipefail
@@ -811,7 +822,7 @@ runs:
 
     - name: Test Rust & bindgen
       shell: bash
-      if: ${{ env.OP_RUST_BUILD == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_RUST_BUILD == 'true') }}
       run: |
         # Test Rust & bindgen
         set -euo pipefail
@@ -825,7 +836,7 @@ runs:
       id: restore-ccache-cache
       uses: ./action-source/.github/actions/cache/restore
       continue-on-error: true
-      if: ${{ inputs.clean == false || inputs.clean == 'false' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (inputs.clean == false || inputs.clean == 'false') }}
       with:
         cache_path: ${{ env.CCACHE_DIR }}
         cache_key: ${{ inputs.ksu_type }}-v3-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
@@ -839,7 +850,7 @@ runs:
       id: restore-lto-ld-cache
       uses: ./action-source/.github/actions/cache/restore
       continue-on-error: true
-      if: ${{ (inputs.clean == false && env.OP_LTO != 'none') || (inputs.clean == 'false' && env.OP_LTO != 'none') }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && ((inputs.clean == false && env.OP_LTO != 'none') || (inputs.clean == 'false' && env.OP_LTO != 'none')) }}
       with:
         cache_path: ${{ env.LDCACHE_DIR }}
         cache_key: ${{ inputs.ksu_type }}-v3-LTO-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-${{ env.CLANG_VERSION_SHORT }}
@@ -849,6 +860,7 @@ runs:
           ${{ inputs.ksu_type }}-v3-LTO-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-${{ env.KERNEL_FULL_VER }}-
           ${{ inputs.ksu_type }}-v3-LTO-${{ env.OP_MODEL }}-${{ env.OP_OS_VERSION }}-
     - name: Check and Prepare Caches
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         echo "::group::Check ccache"
@@ -888,6 +900,7 @@ runs:
         echo "::endgroup::"
 
     - name: Fetch SusFS and Other Dependencies
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         echo "::group::Fetch dependencies"
@@ -1124,6 +1137,7 @@ runs:
         echo "::endgroup::"
 
     - name: Clean Up ABI Protected Exports
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         echo "::group::Clean Up ABI Protected Exports"
@@ -1136,7 +1150,7 @@ runs:
 
     - name: Add KernelSU
       shell: bash
-      if: ${{ inputs.ksu_type == 'KSU' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (inputs.ksu_type == 'KSU') }}
       run: |
         set -euo pipefail
         echo "::group::Add KernelSU"
@@ -1194,7 +1208,7 @@ runs:
 
     - name: Add KernelSU Next
       shell: bash
-      if: ${{ inputs.ksu_type == 'KSUN' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (inputs.ksu_type == 'KSUN') }}
       run: |
         set -euo pipefail
         echo "::group::Add KernelSU Next"
@@ -1269,7 +1283,7 @@ runs:
 
     - name: Add ReSukiSU (The Sukisaku Project)
       shell: bash
-      if: ${{ inputs.ksu_type == 'ReSukiSU' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (inputs.ksu_type == 'ReSukiSU') }}
       run: |
         set -euo pipefail
         echo "::group::Add ReSukiSU"
@@ -1305,7 +1319,7 @@ runs:
 
     - name: Apply SUSFS Patches
       shell: bash
-      if: ${{ env.OP_SUSFS == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_SUSFS == 'true') }}
       run: |
         set -euo pipefail
         echo "::group::Apply SUSFS patches"
@@ -1710,6 +1724,7 @@ runs:
         echo "::endgroup::"
     
     - name: Apply NoMount
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -1777,7 +1792,7 @@ runs:
         echo "::endgroup::"
 
     - name: Add BBG
-      if: ${{ env.OP_BBG == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_BBG == 'true') }}
       shell: bash
       run: |
         set -euo pipefail
@@ -1803,7 +1818,7 @@ runs:
 
     - name: Apply KSU Hooks
       shell: bash
-      if: ${{ env.NEED_HOOKS == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.NEED_HOOKS == 'true') }}
       run: |
         set -euo pipefail
         echo "::group::Apply KSU hooks"
@@ -1818,6 +1833,7 @@ runs:
         echo "::endgroup::"
 
     - name: Apply Other Patches
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2164,7 +2180,7 @@ runs:
 
     - name: Apply NTSync Patch
       shell: bash
-      if: ${{ env.OP_NTSYNC == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_NTSYNC == 'true') }}
       run: |
         set -euo pipefail
         echo "::group::Apply NTSync patch"
@@ -2242,7 +2258,7 @@ runs:
 
     - name: Apply Unicode Fix Patch
       shell: bash
-      if: ${{ env.OP_UNICODE == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_UNICODE == 'true') }}
       run: |
         set -euo pipefail
         echo "::group::Apply Unicode Fix patch"
@@ -2266,6 +2282,7 @@ runs:
         fi
 
     - name: Add Tmpfs Support
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2277,7 +2294,7 @@ runs:
 
 
     - name: Add BBR
-      if: ${{ env.OP_BBR == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_BBR == 'true') }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2294,7 +2311,7 @@ runs:
         patch -p1 < "$KERNEL_PATCHES_FOLDER/common/bbrv3/0001-net-tcp-backport-BBRv3-to-$ANDROID_VER-$KERNEL_VER.patch"
 
     - name: Add TTL Target Support
-      if: ${{ env.OP_TTL == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_TTL == 'true') }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2306,7 +2323,7 @@ runs:
         EOF
 
     - name: Add IP SET & IPv6_NAT Support
-      if: ${{ env.OP_IP_SET == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_IP_SET == 'true') }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2353,6 +2370,7 @@ runs:
         fi
     
     - name: Add USB DWC3 & OTG Support
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2388,7 +2406,7 @@ runs:
 
     - name: Add LXC / Droidspaces support
       shell: bash
-      if: ${{ env.OP_LXC_DS == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_LXC_DS == 'true') }}
       run: |
         set -euo pipefail
         echo "Add Droidspaces Support"
@@ -2410,7 +2428,7 @@ runs:
 
     - name: Add Droidspaces support
       shell: bash
-      if: ${{ env.OP_DS == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_DS == 'true') }}
       run: |
         echo "::group::Add Droidspaces Support"
         set -euo pipefail
@@ -2495,6 +2513,7 @@ runs:
         echo "::endgroup::"
 
     - name: Add Build based configs
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2509,7 +2528,7 @@ runs:
 
     - name: Add RUST build configs
       shell: bash
-      if: ${{ env.OP_RUST_BUILD == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.OP_RUST_BUILD == 'true') }}
       run: |
         set -euo pipefail
         echo "Add Build based configs"
@@ -2519,6 +2538,7 @@ runs:
         EOF
     
     - name: Resolve KSU Symbol Dependencies
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2554,6 +2574,7 @@ runs:
         fi
 
     - name: Save Build Metadata
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       id: save_metadata
       shell: bash
       run: |
@@ -2570,6 +2591,7 @@ runs:
         fi
 
     - name: Customize Kernel Branding
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2581,13 +2603,14 @@ runs:
 
     - name: Disable GPUEB
       shell: bash
-      if: ${{ env.KERNEL_VER == '5.10' && (startsWith(env.OP_SOC, 'dimensity') || startsWith(env.OP_SOC, 'helio')) }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (env.KERNEL_VER == '5.10' && (startsWith(env.OP_SOC, 'dimensity') || startsWith(env.OP_SOC, 'helio'))) }}
       run: |
         set -euo pipefail
         echo "Disabling GPUEB for MTK kernel 5.10"
         sed -i '/obj-y.*gpueb/d' "$COMMON_KERNEL_FOLDER/drivers/gpu/mediatek/Makefile"
 
     - name: Apply Fake config.gz patch
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2609,6 +2632,7 @@ runs:
         echo "CONFIG_FAKE_DISABLE=${CONFIG_STRING}" >> $GITHUB_ENV
 
     - name: Build Kernel
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       id: build_kernel_step
       shell: bash
       env:
@@ -2856,7 +2880,7 @@ runs:
 
     - name: 📊 ccache Post-Build Statistics
       id: ccache_stats
-      if: ${{ success() && (inputs.clean == false || inputs.clean == 'false') }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (success() && (inputs.clean == false || inputs.clean == 'false')) }}
       shell: bash
       run: |
         set -euo pipefail
@@ -2925,6 +2949,7 @@ runs:
         echo '```' >> $GITHUB_STEP_SUMMARY
 
     - name: Collect Build Stats / Validate Image
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       id: collect_stats
       shell: bash
       run: |
@@ -2982,6 +3007,7 @@ runs:
         echo "::endgroup::"
 
     - name: Create Kernel ZIP
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       id: create_zip
       shell: bash
       run: |
@@ -3045,6 +3071,7 @@ runs:
         echo "::endgroup::"
 
     - name: Final Build Summary
+      if: ${{ inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -3186,7 +3213,7 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload Debug Artifacts
-      if: ${{ always() && !cancelled() && inputs.debug == 'true' }}
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (always() && !cancelled() && inputs.debug == 'true') }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.DEBUG_ZIP_NAME }}
@@ -3195,7 +3222,7 @@ runs:
         retention-days: 90
 
     - name: Upload Artifacts
-      if: success() && steps.create_zip.conclusion == 'success'
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (success() && steps.create_zip.conclusion == 'success') }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.ZIP_NAME }}
@@ -3205,7 +3232,7 @@ runs:
         retention-days: 90
 
     - name: Upload ccache log
-      if: success() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success'
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (success() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success') }}
       uses: actions/upload-artifact@v7
       with:
         name: "${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_ccache.log"
@@ -3216,13 +3243,13 @@ runs:
 
     - name: 📥 Checkout Code
       uses: actions/checkout@v6
-      if: always() && steps.build_kernel_step.conclusion == 'success'
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (always() && steps.build_kernel_step.conclusion == 'success') }}
       with:
         path: main-source
         fetch-depth: 1
 
     - name: Save ccache cache
-      if: always() && steps.build_kernel_step.conclusion == 'success'
+      if: ${{ (inputs.upstream_gki_tag == '' || env.UPSTREAM_GKI_PORT_STATUS == 'success') && (always() && steps.build_kernel_step.conclusion == 'success') }}
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.CCACHE_DIR }}
