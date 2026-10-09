@@ -1,0 +1,67 @@
+name: Validate OP12R Android 13 GKI 5.15.211 port
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/actions/build-kernel/action.yml"
+      - "configs/oos16/OP12r-gki-5.15.211.json"
+
+permissions:
+  contents: read
+
+jobs:
+  op12r-gki-port-build:
+    name: Merge GKI tag, build Full-LTO kernel, collect diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out candidate source and config
+        uses: actions/checkout@v4
+
+      - name: Verify candidate config
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONFIG_FILE="configs/oos16/OP12r-gki-5.15.211.json"
+          jq -e '
+            .model == "OP12r" and
+            .soc == "kalama" and
+            .branch == "wild/sm8550" and
+            .manifest == "oneplus_12r_w.xml" and
+            .android_version == "android13" and
+            .kernel_version == "5.15" and
+            .os_version == "OOS16" and
+            .lto == "full" and
+            .susfs == true
+          ' "$CONFIG_FILE" >/dev/null
+          echo "json=$(jq -c . "$CONFIG_FILE")" >> "$GITHUB_OUTPUT"
+          jq '{model, soc, branch, manifest, android_version, kernel_version, os_version, lto, susfs, hmbird, bbg, bbr, bbr3, ttl, ip_set, ntsync}' "$CONFIG_FILE"
+
+      - name: Build OP12R GKI 5.15.211 candidate
+        id: build
+        uses: ./.github/actions/build-kernel
+        with:
+          op_config_json: ${{ steps.config.outputs.json }}
+          ksu_type: KSUN
+          ksu_branch_or_hash: v3.4.0
+          susfs_commit_hash_or_branch: ""
+          optimize_level: O2
+          clean: true
+          debug: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upstream_gki_tag: android13-5.15-2026-09_r2
+
+      - name: Upload kernel, merge diagnostics, and build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: op12r-gki-5.15.211-validation-${{ github.run_id }}
+          path: |
+            OP12r/artifacts/**
+            debug_artifacts/**
+            op12r-port-diagnostics/**
+          if-no-files-found: warn
+          retention-days: 14
