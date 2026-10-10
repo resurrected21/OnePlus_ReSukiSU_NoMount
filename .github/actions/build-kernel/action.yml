@@ -1052,43 +1052,66 @@ runs:
           SUSFS_VERSION_FOR_KSUN="$(grep '#define SUSFS_VERSION' "$SUSFS_FOLDER/kernel_patches/include/linux/susfs.h" | awk -F'"' '{print $2}' || true)"
         fi
 
-        if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
-          # SUSFS v2.3.0 is integrated into pershoot's KSUN dev-susfs branch.
-          # Do not combine that integration with the legacy 10_enable_susfs patch.
-          echo "::notice::SUSFS v2.3.0: using pershoot/KernelSU-Next dev-susfs with built-in SUSFS integration."
-          if [ -n "$REQUESTED_KSU_INPUT" ] && [ "$REQUESTED_KSU_INPUT" != "v3.3.0" ]; then
-            echo "::warning::The requested KSUN ref ($REQUESTED_KSU_INPUT) is overridden for SUSFS v2.3.0; using the compatible dev-susfs branch."
-          fi
-          KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')" || true
-          if [[ ! "$KSU_INPUT" =~ ^[[:xdigit:]]{40}$ ]]; then
-            echo "::error::Could not resolve pershoot/KernelSU-Next dev-susfs to a commit SHA"
-            exit 1
-          fi
-          echo "Using pershoot/KernelSU-Next commit: $KSU_INPUT"
-          echo "KSU_SOURCE_REF=pershoot/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
-          curl --fail --location --proto '=https' -LSs \
-            "https://raw.githubusercontent.com/pershoot/KernelSU-Next/$KSU_INPUT/kernel/setup.sh" \
-            | bash -s "$KSU_INPUT"
-        else
-          KSU_INPUT="$REQUESTED_KSU_INPUT"
-          if [ -z "$KSU_INPUT" ]; then
+        if [ -z "$REQUESTED_KSU_INPUT" ]; then
+          if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
+            # This device's required combination is official KSUN v3.4.1
+            # plus SUSFS v2.3.0. Never silently substitute a moving branch.
+            KSU_INPUT="v3.4.1"
+            KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh"
+            KSU_SOURCE_REF="KernelSU-Next/KernelSU-Next@$KSU_INPUT"
+            echo "::notice::SUSFS v2.3.0: defaulting to official KSUN v3.4.1."
+          else
             KSU_INPUT="3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+            KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh"
+            KSU_SOURCE_REF="KernelSU-Next/KernelSU-Next@$KSU_INPUT"
           fi
-          echo "KSU_SOURCE_REF=KernelSU-Next/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
-          curl --fail --location --proto '=https' -LSs \
-            "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh" \
-            | bash -s "$KSU_INPUT"
+        else
+          # Explicit release/tag/hash must be honored exactly; never silently
+          # redirect it to pershoot's moving branch.
+          KSU_INPUT="$REQUESTED_KSU_INPUT"
+          KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh"
+          KSU_SOURCE_REF="KernelSU-Next/KernelSU-Next@$KSU_INPUT"
         fi
+        echo "KSU_SOURCE_REF=$KSU_SOURCE_REF" >> "$GITHUB_ENV"
+        echo "Selected KSUN ref: $KSU_INPUT"
+        curl --fail --location --proto '=https' -LSs "$KSU_SETUP_URL" | bash -s "$KSU_INPUT"
         git -C KernelSU-Next submodule update --init --recursive
         cd KernelSU-Next/kernel
 
-        commits_count="$(git rev-list --count HEAD)"
-        if [ "$commits_count" -lt 2684 ]; then
-          base_version=10200
-        else
-          base_version=30000
+        # SUSFS v2.3.0's Android 13/5.15 kernel patch references
+        # fake_state from security/selinux/ss/services.c. KSUN v3.4.1
+        # defines it file-local in selinux_hide.c, which makes the final
+        # vmlinux link fail with "undefined symbol: fake_state".
+        # Give this existing, initialized KSUN state external linkage only
+        # for the SUSFS v2.3.0 integration; do not create a second state.
+        if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
+          if grep -q '^static struct selinux_state fake_state;' feature/selinux_hide.c; then
+            sed -i 's/^static struct selinux_state fake_state;/struct selinux_state fake_state;/' feature/selinux_hide.c
+          fi
+          if ! grep -q '^struct selinux_state fake_state;' feature/selinux_hide.c; then
+            echo "::error::Expected KSUN fake_state definition was not found; refusing to build an unverified SUSFS integration."
+            exit 1
+          fi
         fi
-        KSU_VERSION="$((commits_count + base_version))"
+
+        commits_count="$(git rev-list --count HEAD)"
+        if [[ -n "$REQUESTED_KSU_INPUT" && "$REQUESTED_KSU_INPUT" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          if [ "$major" -eq 3 ] && [ "$minor" -eq 4 ]; then
+            KSU_VERSION="$((30000 + 4 * 100 + patch))"
+          else
+            KSU_VERSION="$((major * 10000 + minor * 100 + patch))"
+          fi
+        else
+          if [ "$commits_count" -lt 2684 ]; then
+            base_version=10200
+          else
+            base_version=30000
+          fi
+          KSU_VERSION="$((commits_count + base_version))"
+        fi
         sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
 
         if [ -f ksu.c ]; then
@@ -1423,7 +1446,32 @@ runs:
         fi
         
         echo "Applying SUSFS patch..."
-        # Attempt to apply the patch; enter error handling if it doesn't apply cleanly
+        # The KSUN-side fake_state is intentionally translation-unit-local.
+        # SUSFS's generic Android 13/5.15 patch also references it from
+        # services.c, so expose the same state symbol for vmlinux linking.
+        # Add a declaration to the kernel's SELinux services unit and remove
+        # 'static' from KSUN's one definition; do not create a second state.
+        if [ "$susfs_version" = "v2.3.0" ] && [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+          susfs_patch="$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
+          if grep -q 'fake_state' "$susfs_patch"; then
+            ksun_hide="$KERNEL_PLATFORM_FOLDER/KernelSU-Next/kernel/feature/selinux_hide.c"
+            selinux_services="$COMMON_KERNEL_FOLDER/security/selinux/ss/services.c"
+            if [ ! -f "$ksun_hide" ] || [ ! -f "$selinux_services" ]; then
+              echo "::error::Cannot locate KSUN selinux_hide.c or SELinux services.c for fake_state linkage fix."
+              exit 1
+            fi
+            if grep -qxF 'static struct selinux_state fake_state;' "$ksun_hide"; then
+              sed -i 's/^static struct selinux_state fake_state;$/struct selinux_state fake_state;/' "$ksun_hide"
+            fi
+            if ! grep -qxF 'struct selinux_state fake_state;' "$ksun_hide"; then
+              echo "::error::Expected KSUN fake_state definition not found; no compatibility change applied."
+              exit 1
+            fi
+            if ! grep -qxF 'extern struct selinux_state fake_state;' "$selinux_services"; then
+              sed -i '1i extern struct selinux_state fake_state;' "$selinux_services"
+            fi
+          fi
+        fi
         if ! patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"; then
           echo "Patch reported errors. Checking for known mm/memory.c Hunk #1 context mismatch..."
           
@@ -2416,15 +2464,12 @@ runs:
           echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
         fi
 
-    - name: Customize Kernel Branding
+    - name: Configure stock-style kernel release prefix
       shell: bash
       run: |
         set -euo pipefail
-        echo "Customize Kernel Branding"
-        cd "$COMMON_KERNEL_FOLDER"
-        mkdir -p out
-        CUSTOM_LOCALVERSION="-${ANDROID_VER}-${OP_UNAME}-${{ github.actor }}"
-        echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
+        echo "Using OnePlus stock-style LOCALVERSION prefix: -android13-8-o-01214"
+        echo 'CUSTOM_LOCALVERSION=-android13-8-o-01214' >> "$GITHUB_ENV"
 
     - name: Disable GPUEB
       shell: bash
@@ -2550,12 +2595,10 @@ runs:
         
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" gki_defconfig
         
-        LOCAL_LOCALVERSION="${CUSTOM_LOCALVERSION:--OP-RESUKISU}"
-        if [ -n "${LOCAL_LOCALVERSION:-}" ]; then
-          scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${LOCAL_LOCALVERSION}"
-          scripts/config --file "$OUT/.config" -d LOCALVERSION_AUTO || true
-          sed -i 's/scm_version="$(scm_version --short)"/scm_version=""/' scripts/setlocalversion
-        fi
+        # Match the stock OnePlus 12R release naming pattern while letting
+        # setlocalversion derive the -g<commit> suffix from this source tree.
+        scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
+        scripts/config --file "$OUT/.config" -e LOCALVERSION_AUTO
         
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE -e CC_OPTIMIZE_FOR_PERFORMANCE_O3

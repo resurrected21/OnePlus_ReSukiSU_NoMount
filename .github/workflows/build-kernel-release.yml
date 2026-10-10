@@ -44,9 +44,9 @@ on:
           - KSU
         default: KSUN
       ksu_branch_or_hash:
-        description: 'KSU branch/tag/hash. For KSUN + SUSFS v2.3.0, the build selects the latest compatible pershoot/dev-susfs commit automatically.'
+        description: 'KSU branch/tag/hash. For KSUN + SUSFS v2.3.0, an explicit tag/hash is honored; leave empty to select pershoot/dev-susfs automatically.'
         type: string
-        default: 'v3.4.0'
+        default: 'v3.4.1'
       optimize_level:
         description: "Compiler optimization level"
         required: true
