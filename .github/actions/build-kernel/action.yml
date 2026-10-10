@@ -1102,6 +1102,23 @@ runs:
         echo "KernelSU Next version code (stock formula): $KSU_VERSION"
         echo "::endgroup::"
 
+    - name: Verify KSUN manager compatibility metadata
+      shell: bash
+      if: ${{ inputs.ksu_type == 'KSUN' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Verify stock KSUN manager identity"
+        KSUN_KBUILD="$KERNEL_PLATFORM_FOLDER/KernelSU-Next/kernel/Kbuild"
+        test -f "$KSUN_KBUILD"
+        grep -qxF 'KSU_NEXT_MANAGER_SIZE := 0x3e6' "$KSUN_KBUILD"
+        grep -qxF 'KSU_NEXT_MANAGER_HASH := 79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7' "$KSUN_KBUILD"
+        echo "Stock v3.4.1 manager identity defaults retained:"
+        grep -E '^KSU_NEXT_MANAGER_(SIZE|HASH) :=' "$KSUN_KBUILD"
+        echo "Use the official v3.4.1 Manager APK signed with the expected upstream identity; do not re-sign it with a different key."
+        echo "::endgroup::"
+
+
+
     - name: Add ReSukiSU (The Sukisaku Project)
       shell: bash
       if: ${{ inputs.ksu_type == 'ReSukiSU' }}
