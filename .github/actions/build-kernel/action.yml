@@ -1054,14 +1054,12 @@ runs:
 
         if [ -z "$REQUESTED_KSU_INPUT" ]; then
           if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
-            echo "::notice::SUSFS v2.3.0: no KSUN ref specified; using pershoot dev-susfs."
-            KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')" || true
-            if [[ ! "$KSU_INPUT" =~ ^[[:xdigit:]]{40}$ ]]; then
-              echo "::error::Could not resolve pershoot/KernelSU-Next dev-susfs to a commit SHA"
-              exit 1
-            fi
-            KSU_SETUP_URL="https://raw.githubusercontent.com/pershoot/KernelSU-Next/$KSU_INPUT/kernel/setup.sh"
-            KSU_SOURCE_REF="pershoot/KernelSU-Next@$KSU_INPUT"
+            # This device's required combination is official KSUN v3.4.1
+            # plus SUSFS v2.3.0. Never silently substitute a moving branch.
+            KSU_INPUT="v3.4.1"
+            KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh"
+            KSU_SOURCE_REF="KernelSU-Next/KernelSU-Next@$KSU_INPUT"
+            echo "::notice::SUSFS v2.3.0: defaulting to official KSUN v3.4.1."
           else
             KSU_INPUT="3b18216f71df189ab3d1b1ce0bdb21be1268e771"
             KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh"
