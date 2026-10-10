@@ -1108,23 +1108,6 @@ runs:
         echo "KernelSU Next version code (stock formula): $KSU_VERSION"
         echo "::endgroup::"
 
-    - name: Verify KSUN manager compatibility metadata
-      shell: bash
-      if: ${{ inputs.ksu_type == 'KSUN' }}
-      run: |
-        set -euo pipefail
-        echo "::group::Verify stock KSUN manager identity"
-        KSUN_KBUILD="$KERNEL_PLATFORM_FOLDER/KernelSU-Next/kernel/Kbuild"
-        test -f "$KSUN_KBUILD"
-        grep -qxF 'KSU_NEXT_MANAGER_SIZE := 0x3e6' "$KSUN_KBUILD"
-        grep -qxF 'KSU_NEXT_MANAGER_HASH := 79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7' "$KSUN_KBUILD"
-        echo "Stock v3.4.1 manager identity defaults retained:"
-        grep -E '^KSU_NEXT_MANAGER_(SIZE|HASH) :=' "$KSUN_KBUILD"
-        echo "Use the official v3.4.1 Manager APK signed with the expected upstream identity; do not re-sign it with a different key."
-        echo "::endgroup::"
-
-
-
     - name: Add ReSukiSU (The Sukisaku Project)
       shell: bash
       if: ${{ inputs.ksu_type == 'ReSukiSU' }}
@@ -1246,22 +1229,18 @@ runs:
                 mv "$tmp_kconfig" ./kernel/Kconfig
               fi
 
-              # The v3.3.0 source omits the dispatcher guard in both x86
-              # blocks and has trailing whitespace in the init guard comment.
-              # Restore the v2.2.0 compatibility patch's exact preimage.
+              # Stock KernelSU-Next v3.4.1 already carries the dispatcher
+              # guard required by the SUSFS compatibility patch. Validate the
+              # upstream preimage and do not rewrite the KSUN source to mimic v3.3.0.
               init_source=./kernel/core/init.c
-              if [ "$(grep -Fxc '#if defined(__x86_64__)' "$init_source")" -ne 2 ]; then
-                echo "::error::Unexpected KernelSU Next v3.3.0 x86 guard layout"
+              if [ "$(grep -Fxc '#if defined(__x86_64__) && !defined(CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER)' "$init_source")" -ne 2 ]; then
+                echo "::error::Unexpected stock KernelSU-Next v3.4.1 x86 guard layout"
                 exit 1
               fi
-              if [ "$(grep -Fxc '    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set ' "$init_source")" -ne 1 ]; then
-                echo "::error::Unexpected KernelSU Next v3.3.0 init guard comment"
+              if [ "$(grep -Fxc '    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set' "$init_source")" -ne 1 ]; then
+                echo "::error::Unexpected stock KernelSU-Next v3.4.1 init guard comment"
                 exit 1
               fi
-              sed -i \
-                -e 's|^#if defined(__x86_64__)$|#if defined(__x86_64__) \&\& !defined(CONFIG_KSU_X86_PATCH_SYSCALL_DISPATCHER)|' \
-                -e 's|^    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set $|    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set|' \
-                "$init_source"
               for compatibility_patch in fix_Kbuild.patch fix_init.c.patch fix_kernel_umount.c.patch fix_setuid_hook.c.patch fix_sucompat.c.patch fix_supercall.c.patch; do
                 patch -p1 --forward < "$KERNEL_PATCHES_FOLDER/next/susfs_fix_patches/$susfs_version/$compatibility_patch"
               done
@@ -1563,6 +1542,20 @@ runs:
         
         echo "::endgroup::"
     
+    - name: Verify KSUN manager compatibility metadata
+      shell: bash
+      if: ${{ inputs.ksu_type == 'KSUN' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Verify stock KSUN manager identity"
+        KSUN_KBUILD="$KERNEL_PLATFORM_FOLDER/KernelSU-Next/kernel/Kbuild"
+        test -f "$KSUN_KBUILD"
+        grep -qxF 'KSU_NEXT_MANAGER_SIZE := 0x3e6' "$KSUN_KBUILD"
+        grep -qxF 'KSU_NEXT_MANAGER_HASH := 79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7' "$KSUN_KBUILD"
+        echo "Stock v3.4.1 manager identity defaults retained:"
+        grep -E '^KSU_NEXT_MANAGER_(SIZE|HASH) :=' "$KSUN_KBUILD"
+        echo "Use the official v3.4.1 Manager APK signed with the expected upstream identity; do not re-sign it with a different key."
+        echo "::endgroup::"
     - name: Apply NoMount
       shell: bash
       run: |
