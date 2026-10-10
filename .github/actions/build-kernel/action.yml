@@ -1556,6 +1556,93 @@ runs:
         
         echo "::endgroup::"
     
+    - name: KSUN SUSFS v2.3.0 fake_state compatibility
+      if: ${{ env.OP_SUSFS == 'true' && inputs.ksu_type == 'KSUN' && env.ANDROID_VER == 'android13' && env.KERNEL_VER == '5.15' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        SUSFS_VERSION="$(grep '#define SUSFS_VERSION' "$SUSFS_FOLDER/kernel_patches/include/linux/susfs.h" | awk -F '"' '{print $2}')"
+        if [ "$SUSFS_VERSION" != "v2.3.0" ]; then
+          echo "SUSFS $SUSFS_VERSION does not need the v2.3.0 fake_state compatibility bridge"
+          exit 0
+        fi
+
+        python3 - <<'PY'
+        from pathlib import Path
+        import os
+        import re
+        import sys
+
+        source = Path(os.environ["KSUN_FOLDER"]) / "kernel/feature/selinux_hide.c"
+        if not source.is_file():
+            sys.exit(f"KernelSU-Next SELinux-hide source not found: {source}")
+        text = source.read_text()
+
+        # SUSFS v2.3.0's Android 13 / 5.15 services.c patch references a
+        # global fake_state. The current KSUN dev-susfs source omits it because
+        # its hide implementation normally uses *_with_policy() APIs instead.
+        declaration_marker = "bool ksu_selinux_hide_running __read_mostly = false;\\n"
+        declaration = (
+            "#ifdef CONFIG_KSU_SUSFS\\n"
+            "/* Compatibility for the Android 13 / 5.15 SUSFS v2.3.0 SELinux hooks. */\\n"
+            "struct selinux_state fake_state;\\n"
+            "#endif\\n"
+        )
+        if re.search(r"(?m)^struct selinux_state fake_state;$", text) is None:
+            if re.search(r"(?m)^\\s*static\\s+struct selinux_state fake_state;", text):
+                sys.exit("KSUN fake_state exists but is static; it cannot satisfy services.c")
+            if "struct selinux_state fake_state;" in text:
+                sys.exit("KSUN has an unexpected fake_state declaration; refusing to modify it")
+            if text.count(declaration_marker) != 1:
+                sys.exit("Unexpected KSUN selinux_hide.c declaration layout; refusing fake_state integration")
+            text = text.replace(declaration_marker, declaration_marker + declaration, 1)
+
+        enable_marker = (
+            "    if (!backup_sepolicy) {\\n"
+            "        pr_err(\\\"no backup sepolicy available, please save feature and reboot to retry!\\\\n\\");\\n"
+            "        return -EAGAIN;\\n"
+            "    }\\n"
+        )
+        enable_bridge = (
+            "#ifdef CONFIG_KSU_SUSFS\\n"
+            "    fake_state.policy = backup_sepolicy;\\n"
+            "    fake_state.initialized = true;\\n"
+            "#endif\\n"
+        )
+        if "fake_state.policy = backup_sepolicy;" not in text:
+            if text.count(enable_marker) != 1:
+                sys.exit("Unexpected KSUN selinux_hide_enable() layout; refusing fake_state initialization")
+            text = text.replace(enable_marker, enable_marker + enable_bridge, 1)
+
+        drop_function_marker = "void ksu_selinux_hide_drop_backup_if_unused()"
+        drop_parts = text.split(drop_function_marker, 1)
+        if len(drop_parts) != 2:
+            sys.exit("KSUN backup-policy cleanup function not found; refusing unsafe fake_state integration")
+        drop_body = drop_parts[1]
+        drop_marker = '        pr_info("selinux_hide is not enabled - drop backup_sepolicy\\n");\\n'
+        drop_bridge = (
+            "#ifdef CONFIG_KSU_SUSFS\\n"
+            "        fake_state.initialized = false;\\n"
+            "        fake_state.policy = NULL;\\n"
+            "#endif\\n"
+        )
+        if "fake_state.policy = NULL;" not in drop_body:
+            if text.count(drop_marker) != 1:
+                sys.exit("Unexpected KSUN backup-policy cleanup layout; refusing fake_state cleanup")
+            text = text.replace(drop_marker, drop_marker + drop_bridge, 1)
+
+        final_drop_body = text.split(drop_function_marker, 1)[1]
+        if re.search(r"(?m)^struct selinux_state fake_state;$", text) is None:
+            sys.exit("fake_state global declaration verification failed")
+        if "fake_state.policy = backup_sepolicy;" not in text:
+            sys.exit("fake_state policy initialization verification failed")
+        if "fake_state.policy = NULL;" not in final_drop_body:
+            sys.exit("fake_state policy cleanup verification failed")
+
+        source.write_text(text)
+        print("Applied and verified KSUN fake_state compatibility for SUSFS v2.3.0")
+        PY
+
     - name: Apply NoMount
       shell: bash
       run: |
