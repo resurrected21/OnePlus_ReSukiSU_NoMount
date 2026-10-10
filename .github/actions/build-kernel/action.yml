@@ -1540,6 +1540,7 @@ runs:
         python3 - <<'PY'
         from pathlib import Path
         import os
+        import re
         import sys
 
         source = Path(os.environ["KSUN_FOLDER"]) / "kernel/feature/selinux_hide.c"
@@ -1552,7 +1553,10 @@ runs:
             "struct selinux_state fake_state;\n"
             "#endif\n"
         )
-        if "struct selinux_state fake_state;" not in text:
+        has_global_fake_state = re.search(r"(?m)^struct selinux_state fake_state;$", text) is not None
+        if not has_global_fake_state:
+            if "struct selinux_state fake_state;" in text:
+                sys.exit("KernelSU-Next has a non-global fake_state declaration; refusing unsafe compatibility patch")
             if text.count(declaration_marker) != 1:
                 sys.exit("Unexpected KernelSU-Next selinux_hide.c declaration layout; refusing fake_state patch")
             text = text.replace(declaration_marker, declaration_marker + declaration, 1)
@@ -1600,7 +1604,7 @@ runs:
                 sys.exit("Unexpected KernelSU-Next backup-drop layout; refusing fake_state cleanup")
             text = text.replace(drop_marker, drop_marker + drop_bridge, 1)
 
-        if text.count("struct selinux_state fake_state;") != 1 or "RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);" not in text:
+        if re.search(r"(?m)^struct selinux_state fake_state;$", text) is None or "RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);" not in text:
             sys.exit("fake_state compatibility bridge verification failed")
         source.write_text(text)
         PY
