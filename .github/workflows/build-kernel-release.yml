@@ -44,7 +44,7 @@ on:
           - KSU
         default: KSUN
       ksu_branch_or_hash:
-        description: 'KSU branch/tag/hash. KSUN is pinned to the official stock KernelSU-Next v3.4.1 tag; other refs are rejected.'
+        description: 'KSU branch/tag/hash. KSUN selects pershoot/dev-susfs for SUSFS configs and official v3.4.1 otherwise.'
         type: string
         default: 'v3.4.1'
       optimize_level:
@@ -223,20 +223,42 @@ jobs:
           ksu_type="${{ inputs.ksu_type }}"
           ksu_ref="${{ inputs.ksu_branch_or_hash }}"
           
-          if [ "$ksu_type" = "KSUN" ] && [ "$ksu_ref" != "v3.4.1" ]; then
-            echo "::error::This workflow builds only official stock KernelSU-Next v3.4.1. Set KSU ref to v3.4.1; do not use a fork, local variant, branch, or arbitrary commit."
-            exit 1
-          fi
-          
-          if [ "$ksu_type" == "ReSukiSU" ]; then
+          # Pick KSUN source from selected configs. SUSFS uses the existing
+          # pershoot integration; non-SUSFS builds use official stock v3.4.1.
+          if [ "$ksu_type" = "KSUN" ]; then
+            susfs_modes="$(jq -r '[.[].susfs // false] | unique | length' <<<"$filtered")"
+            if [ "$susfs_modes" -gt 1 ]; then
+              echo "::error::This selection mixes SUSFS and non-SUSFS configs. Build them separately to avoid mixing KSUN sources."
+              exit 1
+            fi
+            has_susfs="$(jq -r 'any(.[]; .susfs == true)' <<<"$filtered")"
+            if [ "$has_susfs" = "true" ]; then
+              KSU_REPO_OWNER="pershoot"
+              KSU_REPO_NAME="KernelSU-Next"
+              ksu_ref="dev-susfs"
+              echo "KSUN source: pershoot/KernelSU-Next@dev-susfs (SUSFS enabled)"
+            else
+              KSU_REPO_OWNER="KernelSU-Next"
+              KSU_REPO_NAME="KernelSU-Next"
+              ksu_ref="v3.4.1"
+              echo "KSUN source: official KernelSU-Next@v3.4.1 (SUSFS disabled)"
+            fi
+          elif [ "$ksu_type" = "ReSukiSU" ]; then
             KSU_REPO_OWNER="ReSukiSU"
             KSU_REPO_NAME="ReSukiSU"
-          elif [ "$ksu_type" == "KSUN" ]; then
-            KSU_REPO_OWNER="KernelSU-Next"
-            KSU_REPO_NAME="KernelSU-Next"
           else
             KSU_REPO_OWNER="tiann"
             KSU_REPO_NAME="KernelSU"
+          fi
+          
+          if [ "$ksu_type" != "KSUN" ]; then
+            if [ "$ksu_type" = "ReSukiSU" ]; then
+              KSU_REPO_OWNER="ReSukiSU"
+              KSU_REPO_NAME="ReSukiSU"
+            else
+              KSU_REPO_OWNER="tiann"
+              KSU_REPO_NAME="KernelSU"
+            fi
           fi
           
           HEAD_REF="refs/heads/${ksu_ref}"
