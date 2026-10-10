@@ -1531,6 +1531,86 @@ runs:
             fi
           fi
         fi
+        # SUSFS v2.3.0's SELinux callbacks reference a global fake_state,
+        # but the current KernelSU-Next dev-susfs source no longer defines it.
+        # Supply the symbol for this exact kernel/SUSFS combination; initialize it
+        # only while the SELinux-hide feature has a valid backup policy.
+        if [ "$susfs_version" = "v2.3.0" ] && [ "${{ inputs.ksu_type }}" = "KSUN" ] && \
+           [ "$ANDROID_VER" = "android13" ] && [ "$KERNEL_VER" = "5.15" ]; then
+        python3 - <<'PY'
+        from pathlib import Path
+        import os
+        import re
+        import sys
+
+        source = Path(os.environ["KSUN_FOLDER"]) / "kernel/feature/selinux_hide.c"
+        text = source.read_text()
+        declaration_marker = "bool ksu_selinux_hide_running __read_mostly = false;\n"
+        declaration = (
+            "/* Compatibility state required by SUSFS v2.3.0 SELinux hooks. */\n"
+            "struct selinux_state fake_state;\n"
+        )
+        if re.search(r"(?m)^struct selinux_state fake_state;$", text) is None:
+            if "struct selinux_state fake_state;" in text:
+                sys.exit("KernelSU-Next has a non-global fake_state declaration; refusing unsafe compatibility patch")
+            if text.count(declaration_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next selinux_hide.c declaration layout; refusing fake_state compatibility patch")
+            text = text.replace(declaration_marker, declaration_marker + declaration, 1)
+
+        enable_marker = (
+            "    if (!backup_sepolicy) {\n"
+            "        pr_err(\"no backup sepolicy available, please save feature and reboot to retry!\\n\");\n"
+            "        return -EAGAIN;\n"
+            "    }\n"
+        )
+        enable_bridge = (
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "    RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);\n"
+            "    selinux_mark_initialized(&fake_state);\n"
+            "#endif\n"
+        )
+        if "RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);" not in text:
+            if text.count(enable_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next selinux_hide.c enable layout; refusing fake_state initialization")
+            text = text.replace(enable_marker, enable_marker + enable_bridge, 1)
+
+        exit_marker = "    mutex_unlock(&selinux_hide_mutex);\n    ksu_unregister_feature_handler(KSU_FEATURE_SELINUX_HIDE);\n"
+        exit_bridge = (
+            "    mutex_unlock(&selinux_hide_mutex);\n"
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "    RCU_INIT_POINTER(fake_state.policy, NULL);\n"
+            "    fake_state.initialized = false;\n"
+            "#endif\n"
+            "    ksu_unregister_feature_handler(KSU_FEATURE_SELINUX_HIDE);\n"
+        )
+        if "fake_state.initialized = false;" not in text:
+            if text.count(exit_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next selinux_hide.c exit layout; refusing fake_state cleanup")
+            text = text.replace(exit_marker, exit_bridge, 1)
+
+        drop_marker = '        pr_info("selinux_hide is not enabled - drop backup_sepolicy\\n");\n'
+        drop_bridge = (
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "        RCU_INIT_POINTER(fake_state.policy, NULL);\n"
+            "        fake_state.initialized = false;\n"
+            "#endif\n"
+        )
+        drop_function = text.split("void ksu_selinux_hide_drop_backup_if_unused()", 1)
+        if len(drop_function) != 2:
+            sys.exit("Unexpected KernelSU-Next backup-drop function; refusing fake_state cleanup")
+        if "RCU_INIT_POINTER(fake_state.policy, NULL);" not in drop_function[1]:
+            if text.count(drop_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next backup-drop layout; refusing fake_state cleanup")
+            text = text.replace(drop_marker, drop_marker + drop_bridge, 1)
+
+        if re.search(r"(?m)^struct selinux_state fake_state;$", text) is None:
+            sys.exit("fake_state compatibility declaration verification failed")
+        if "RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);" not in text:
+            sys.exit("fake_state policy initialization verification failed")
+        source.write_text(text)
+        PY
+        fi
+
         echo "✅ SUSFS patches applied"
 
         echo "Add SUSFS Configuration Settings"
