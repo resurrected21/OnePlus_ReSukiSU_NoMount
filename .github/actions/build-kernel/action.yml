@@ -1052,52 +1052,50 @@ runs:
           SUSFS_VERSION_FOR_KSUN="$(grep '#define SUSFS_VERSION' "$SUSFS_FOLDER/kernel_patches/include/linux/susfs.h" | awk -F'"' '{print $2}' || true)"
         fi
 
-        if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ] && { [ -z "$REQUESTED_KSU_INPUT" ] || [ "$REQUESTED_KSU_INPUT" = "dev-susfs" ]; }; then
-          # Use pershoot's moving integration branch only when the user did not
-          # request a specific KSUN release. Explicit release/tag/hash inputs win.
-          echo "::notice::SUSFS v2.3.0: no explicit KSUN ref supplied; using pershoot dev-susfs."
-          KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')" || true
-          if [[ ! "$KSU_INPUT" =~ ^[[:xdigit:]]{40}$ ]]; then
-            echo "::error::Could not resolve pershoot/KernelSU-Next dev-susfs to a commit SHA"
-            exit 1
+        if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
+          if [ -z "$REQUESTED_KSU_INPUT" ] || [ "$REQUESTED_KSU_INPUT" = "dev-susfs" ]; then
+            echo "::notice::SUSFS v2.3.0: no explicit KSUN release supplied; using pershoot dev-susfs."
+            KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')" || true
+            if [[ ! "$KSU_INPUT" =~ ^[[:xdigit:]]{40}$ ]]; then
+              echo "::error::Could not resolve pershoot/KernelSU-Next dev-susfs to a commit SHA"
+              exit 1
+            fi
+            KSU_SETUP_URL="https://raw.githubusercontent.com/pershoot/KernelSU-Next/$KSU_INPUT/kernel/setup.sh"
+            KSU_SOURCE_REF="pershoot/KernelSU-Next@$KSU_INPUT"
+          else
+            # Explicit version/tag/hash must be respected, even for SUSFS v2.3.0.
+            KSU_INPUT="$REQUESTED_KSU_INPUT"
+            KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh"
+            KSU_SOURCE_REF="KernelSU-Next/KernelSU-Next@$KSU_INPUT"
           fi
-          echo "Using pershoot/KernelSU-Next commit: $KSU_INPUT"
-          echo "KSU_SOURCE_REF=pershoot/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
-          curl --fail --location --proto '=https' -LSs \
-            "https://raw.githubusercontent.com/pershoot/KernelSU-Next/$KSU_INPUT/kernel/setup.sh" \
-            | bash -s "$KSU_INPUT"
         else
           KSU_INPUT="$REQUESTED_KSU_INPUT"
           if [ -z "$KSU_INPUT" ]; then
             KSU_INPUT="3b18216f71df189ab3d1b1ce0bdb21be1268e771"
           fi
-          echo "KSU_SOURCE_REF=KernelSU-Next/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
-          curl --fail --location --proto '=https' -LSs \
-            "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh" \
-            | bash -s "$KSU_INPUT"
+          KSU_SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh"
+          KSU_SOURCE_REF="KernelSU-Next/KernelSU-Next@$KSU_INPUT"
         fi
+        echo "KSU_SOURCE_REF=$KSU_SOURCE_REF" >> "$GITHUB_ENV"
+        echo "Selected KSUN ref: $KSU_INPUT"
+        curl --fail --location --proto '=https' -LSs "$KSU_SETUP_URL" | bash -s "$KSU_INPUT"
         git -C KernelSU-Next submodule update --init --recursive
         cd KernelSU-Next/kernel
 
         commits_count="$(git rev-list --count HEAD)"
-        case "$REQUESTED_KSU_INPUT" in
-          v3.4.1|3.4.1)
-            # Preserve the requested release version instead of inferring it
-            # from commit count (which can label release tags incorrectly).
-            KSU_VERSION=34001
-            ;;
-          v3.4.0|3.4.0)
-            KSU_VERSION=34000
-            ;;
-          *)
-            if [ "$commits_count" -lt 2684 ]; then
-              base_version=10200
-            else
-              base_version=30000
-            fi
-            KSU_VERSION="$((commits_count + base_version))"
-            ;;
-        esac
+        if [ -n "$REQUESTED_KSU_INPUT" ] && [[ "$REQUESTED_KSU_INPUT" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          KSU_VERSION="$((major * 10000 + minor * 100 + patch))"
+        else
+          if [ "$commits_count" -lt 2684 ]; then
+            base_version=10200
+          else
+            base_version=30000
+          fi
+          KSU_VERSION="$((commits_count + base_version))"
+        fi
         sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
 
         if [ -f ksu.c ]; then
