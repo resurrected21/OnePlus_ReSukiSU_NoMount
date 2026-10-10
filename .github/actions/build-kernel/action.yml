@@ -1090,6 +1090,12 @@ runs:
         cd KernelSU-Next/kernel
         KSUN_COMMIT_COUNT="$(git rev-list --count HEAD)"
         KSU_VERSION="$((30000 + KSUN_COMMIT_COUNT))"
+        # The official v3.4.1 Manager release is versionCode 33333. Fail closed
+        # if this source checkout would compile a different kernel-side version.
+        if [[ "$KSU_VERSION" -ne 33333 ]]; then
+          echo "::error::Official KSUN v3.4.1 should calculate versionCode 33333 for Manager compatibility; got $KSU_VERSION from $KSUN_COMMIT_COUNT commits."
+          exit 1
+        fi
         echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
         printf '%s\n%s\n' "KSUN" "$KSU_VERSION" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
