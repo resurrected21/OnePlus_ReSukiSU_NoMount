@@ -1080,6 +1080,22 @@ runs:
         git -C KernelSU-Next submodule update --init --recursive
         cd KernelSU-Next/kernel
 
+        # SUSFS v2.3.0's Android 13/5.15 kernel patch references
+        # fake_state from security/selinux/ss/services.c. KSUN v3.4.1
+        # defines it file-local in selinux_hide.c, which makes the final
+        # vmlinux link fail with "undefined symbol: fake_state".
+        # Give this existing, initialized KSUN state external linkage only
+        # for the SUSFS v2.3.0 integration; do not create a second state.
+        if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
+          if grep -q '^static struct selinux_state fake_state;' feature/selinux_hide.c; then
+            sed -i 's/^static struct selinux_state fake_state;/struct selinux_state fake_state;/' feature/selinux_hide.c
+          fi
+          if ! grep -q '^struct selinux_state fake_state;' feature/selinux_hide.c; then
+            echo "::error::Expected KSUN fake_state definition was not found; refusing to build an unverified SUSFS integration."
+            exit 1
+          fi
+        fi
+
         commits_count="$(git rev-list --count HEAD)"
         if [[ -n "$REQUESTED_KSU_INPUT" && "$REQUESTED_KSU_INPUT" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
           major="${BASH_REMATCH[1]}"
