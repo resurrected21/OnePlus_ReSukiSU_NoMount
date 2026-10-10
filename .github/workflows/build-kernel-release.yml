@@ -235,8 +235,12 @@ jobs:
             if [ "$has_susfs" = "true" ]; then
               KSU_REPO_OWNER="pershoot"
               KSU_REPO_NAME="KernelSU-Next"
-              ksu_ref="dev-susfs"
-              echo "KSUN source: pershoot/KernelSU-Next@dev-susfs (SUSFS enabled)"
+              # SUSFS v2.3.0 is only enabled against a known public KSUN
+              # integration revision. Pin the commit rather than tracking an
+              # experimental branch whose hook layout can change underneath
+              # the compatibility patch.
+              ksu_ref="3438d6aa431f96a23f9e625bec3d53ce1fb14161"
+              echo "KSUN source: pershoot/KernelSU-Next@$ksu_ref (pinned SUSFS v2.3.0 integration)"
             else
               KSU_REPO_OWNER="KernelSU-Next"
               KSU_REPO_NAME="KernelSU-Next"
