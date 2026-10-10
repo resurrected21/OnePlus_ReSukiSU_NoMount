@@ -1337,7 +1337,11 @@ runs:
             fi
             ;;
           "v2.3.0")
-            echo "::error::SUSFS v2.3.0 currently relies on this workflow's non-stock pershoot/KernelSU-Next dev-susfs integration. This workflow now enforces official stock KSUN v3.4.1 and will not switch forks or claim unverified compatibility. Use the tested v2.2.0 compatibility path or disable SUSFS until a separate stock-source v2.3.0 patch series is validated."
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              echo "::error::SUSFS v2.3.0 compatibility currently depends on the non-stock pershoot/KernelSU-Next dev-susfs fork. Stock KSUN v3.4.1 is enforced here; no fork will be substituted. Use the tested v2.2.0 compatibility path or disable SUSFS until a stock-source v2.3.0 patch series is validated."
+            else
+              echo "::error::SUSFS v2.3.0 has no validated compatibility patch series for the selected KSU variant in this workflow."
+            fi
             exit 1
             ;;
           *)
@@ -2964,8 +2968,6 @@ runs:
           
           if [ "${{ inputs.ksu_type }}" = "ReSukiSU" ]; then
             KSU_COMMIT_BASE_URL="https://github.com/ReSukiSU/ReSukiSU"
-          elif [[ "$KSU_SOURCE" == pershoot/KernelSU-Next@* ]]; then
-            KSU_COMMIT_BASE_URL="https://github.com/pershoot/KernelSU-Next"
           elif [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
             KSU_COMMIT_BASE_URL="https://github.com/KernelSU-Next/KernelSU-Next"
           elif [ "${{ inputs.ksu_type }}" = "KSU" ]; then
