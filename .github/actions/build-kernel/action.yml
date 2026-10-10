@@ -1074,7 +1074,7 @@ runs:
           echo "::error::KSUN checkout is not the official $KSUN_TAG release tag."
           exit 1
         fi
-        if [[ -n "$(git -C KernelSU-Next status --porcelain --untracked-files=no)" ]]; then
+        if [[ -n "$(git -C KernelSU-Next status --porcelain)" ]]; then
           echo "::error::KSUN upstream source tree is modified before integration."
           git -C KernelSU-Next status --short
           exit 1
