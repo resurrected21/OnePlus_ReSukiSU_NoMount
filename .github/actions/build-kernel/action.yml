@@ -1315,8 +1315,36 @@ runs:
             fi
             ;;
           "v2.3.0")
-            echo "::error::SUSFS v2.3.0 integration is not yet validated against the selected KernelSU source. The pershoot source path is restored, but this version remains blocked until its patch series is tested; use a validated SUSFS version for now."
-            exit 1
+            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
+              # SUSFS v2.3.0 has a known public KSUN integration based on
+              # pershoot/dev-susfs commit 3438d6aa431f (KSUN v3.3.0).
+              # Apply the upstream SUSFS patch as-authored and fail on any
+              # rejected hunk; do not silently filter or force incompatible
+              # edits into the kernel manager/root implementation.
+              if [ "$KSU_COMMIT_SHA" != "3438d6aa431f96a23f9e625bec3d53ce1fb14161" ]; then
+                echo "::error::SUSFS v2.3.0 requires the pinned pershoot KSUN v3.3.0 commit 3438d6aa431f96a23f9e625bec3d53ce1fb14161; got $KSU_COMMIT_SHA"
+                exit 1
+              fi
+              cd "$KSUN_FOLDER"
+              susfs_ksun_patch="$SUSFS_FOLDER/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+              patch --batch --forward -p1 < "$susfs_ksun_patch"
+
+              if ! grep -q '^config KSU_SUSFS' ./kernel/Kconfig; then
+                echo "::error::SUSFS v2.3.0 patch applied but KSU_SUSFS Kconfig option is missing"
+                exit 1
+              fi
+              if ! grep -q 'susfs' ./kernel/core/init.c; then
+                echo "::error::SUSFS v2.3.0 patch applied but no SUSFS init integration was found"
+                exit 1
+              fi
+              echo "SUSFS v2.3.0 patch applied to pinned pershoot KSUN v3.3.0."
+            elif [ "${{ inputs.ksu_type }}" = "KSU" ]; then
+              echo "::error::SUSFS v2.3.0 with official KernelSU is not configured in this workflow; select KSUN."
+              exit 1
+            else
+              echo "::error::SUSFS v2.3.0 is currently supported only with the pinned KSUN source, not ReSukiSU."
+              exit 1
+            fi
             ;;
           *)
             echo "::error::Unsupported SUSFS version: $susfs_version"
