@@ -1315,11 +1315,8 @@ runs:
             fi
             ;;
           "v2.3.0")
-            if [ "${{ inputs.ksu_type }}" != "KSUN" ]; then
-              echo "::error::SUSFS v2.3.0 has no validated compatibility patch series for the selected KSU variant in this workflow."
-              exit 1
-            fi
-            # KSUN uses pershoot/dev-susfs for SUSFS-enabled configurations.
+            echo "::error::SUSFS v2.3.0 integration is not yet validated against the selected KernelSU source. The pershoot source path is restored, but this version remains blocked until its patch series is tested; use a validated SUSFS version for now."
+            exit 1
             ;;
           *)
             echo "::error::Unsupported SUSFS version: $susfs_version"
