@@ -2416,6 +2416,13 @@ runs:
           echo "susfs_version=${SUSVER:-unknown}" >> "$GITHUB_OUTPUT"
         fi
 
+    - name: Configure stock-style kernel release prefix
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Using OnePlus stock-style LOCALVERSION prefix: -android13-8-o-01214"
+        echo 'CUSTOM_LOCALVERSION=-android13-8-o-01214' >> "$GITHUB_ENV"
+
     - name: Disable GPUEB
       shell: bash
       if: ${{ env.KERNEL_VER == '5.10' && (startsWith(env.OP_SOC, 'dimensity') || startsWith(env.OP_SOC, 'helio')) }}
@@ -2539,6 +2546,11 @@ runs:
         echo "============================================"
         
         make LD="$COMMON_KERNEL_FOLDER/ld-wrapper" HOSTLD="$COMMON_KERNEL_FOLDER/ld-wrapper" O="$OUT" gki_defconfig
+        
+        # Match the stock OnePlus 12R release naming pattern while letting
+        # setlocalversion derive the -g<commit> suffix from this source tree.
+        scripts/config --file "$OUT/.config" --set-str LOCALVERSION "${CUSTOM_LOCALVERSION}"
+        scripts/config --file "$OUT/.config" -e LOCALVERSION_AUTO
         
         if [ "${{ inputs.optimize_level }}" = "O3" ]; then
           scripts/config --file "$OUT/.config" -d CC_OPTIMIZE_FOR_PERFORMANCE -e CC_OPTIMIZE_FOR_PERFORMANCE_O3
