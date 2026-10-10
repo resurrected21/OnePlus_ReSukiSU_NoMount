@@ -44,9 +44,9 @@ on:
           - KSU
         default: KSUN
       ksu_branch_or_hash:
-        description: 'KSU branch/tag/hash. For KSUN + SUSFS v2.3.0, the build selects the latest compatible pershoot/dev-susfs commit automatically.'
+        description: 'KSU branch/tag/hash. KSUN is pinned to the official stock KernelSU-Next v3.4.1 tag; other refs are rejected.'
         type: string
-        default: 'v3.4.0'
+        default: 'v3.4.1'
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -222,6 +222,11 @@ jobs:
           
           ksu_type="${{ inputs.ksu_type }}"
           ksu_ref="${{ inputs.ksu_branch_or_hash }}"
+          
+          if [ "$ksu_type" = "KSUN" ] && [ "$ksu_ref" != "v3.4.1" ]; then
+            echo "::error::This workflow builds only official stock KernelSU-Next v3.4.1. Set KSU ref to v3.4.1; do not use a fork, local variant, branch, or arbitrary commit."
+            exit 1
+          fi
           
           if [ "$ksu_type" == "ReSukiSU" ]; then
             KSU_REPO_OWNER="ReSukiSU"
