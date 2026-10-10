@@ -1058,8 +1058,18 @@ runs:
           exit 1
         fi
 
-        # Use the setup script shipped in the same upstream commit. It links
-        # KernelSU-Next into the kernel tree using the official integration.
+        # Fetch the official tag before invoking its setup script so the exact
+        # pinned object is present even if upstream's default branch moves.
+        git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+        git -C KernelSU-Next fetch --force origin "refs/tags/$KSUN_TAG:refs/tags/$KSUN_TAG"
+        FETCHED_TAG_COMMIT="$(git -C KernelSU-Next rev-parse "refs/tags/$KSUN_TAG^{commit}")"
+        if [[ "$FETCHED_TAG_COMMIT" != "$KSUN_COMMIT" ]]; then
+          echo "::error::Upstream $KSUN_TAG moved or resolved unexpectedly: $FETCHED_TAG_COMMIT"
+          exit 1
+        fi
+
+        # Use the official setup script shipped in that same upstream commit.
+        # It integrates the source into the kernel tree without modifying KSUN code.
         curl --fail --location --proto '=https' -LSs \
           "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/$KSUN_COMMIT/kernel/setup.sh" \
           | bash -s "$KSUN_COMMIT"
