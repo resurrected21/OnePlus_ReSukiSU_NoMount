@@ -1446,16 +1446,30 @@ runs:
         fi
         
         echo "Applying SUSFS patch..."
-        # SUSFS v2.3.0's generic GKI patch references fake_state from the
-        # SELinux services file, but KSUN 3.4.1 defines its fake_state as
-        # file-local in selinux_hide.c. Do not ship that incompatible
-        # cross-translation-unit reference; fail fast until a matching
-        # upstream v2.3.0 patch for this kernel API is selected.
+        # The KSUN-side fake_state is intentionally translation-unit-local.
+        # SUSFS's generic Android 13/5.15 patch also references it from
+        # services.c, so expose the same state symbol for vmlinux linking.
+        # Add a declaration to the kernel's SELinux services unit and remove
+        # 'static' from KSUN's one definition; do not create a second state.
         if [ "$susfs_version" = "v2.3.0" ] && [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
           susfs_patch="$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"
           if grep -q 'fake_state' "$susfs_patch"; then
-            echo "::error::SUSFS v2.3.0 patch references fake_state externally; incompatible with KSUN 3.4.1 SELinux hide implementation on this kernel. A compatible source patch is required."
-            exit 1
+            ksun_hide="$KERNEL_PLATFORM_FOLDER/KernelSU-Next/kernel/feature/selinux_hide.c"
+            selinux_services="$COMMON_KERNEL_FOLDER/security/selinux/ss/services.c"
+            if [ ! -f "$ksun_hide" ] || [ ! -f "$selinux_services" ]; then
+              echo "::error::Cannot locate KSUN selinux_hide.c or SELinux services.c for fake_state linkage fix."
+              exit 1
+            fi
+            if grep -qxF 'static struct selinux_state fake_state;' "$ksun_hide"; then
+              sed -i 's/^static struct selinux_state fake_state;$/struct selinux_state fake_state;/' "$ksun_hide"
+            fi
+            if ! grep -qxF 'struct selinux_state fake_state;' "$ksun_hide"; then
+              echo "::error::Expected KSUN fake_state definition not found; no compatibility change applied."
+              exit 1
+            fi
+            if ! grep -qxF 'extern struct selinux_state fake_state;' "$selinux_services"; then
+              sed -i '1i extern struct selinux_state fake_state;' "$selinux_services"
+            fi
           fi
         fi
         if ! patch -p1 --forward < "$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${{ env.SUSFS_KERNEL_BRANCH }}.patch"; then
