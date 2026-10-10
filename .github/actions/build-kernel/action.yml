@@ -1039,79 +1039,67 @@ runs:
         echo "✅ KernelSU added (commit: ${KSU_COMMIT_SHA:0:8})"
         echo "::endgroup::"
 
-    - name: Add KernelSU Next
+    - name: Add KernelSU Next (stock v3.4.1)
       shell: bash
       if: ${{ inputs.ksu_type == 'KSUN' }}
       run: |
         set -euo pipefail
-        echo "::group::Add KernelSU Next"
+        echo "::group::Add stock KernelSU Next v3.4.1"
         cd "$KERNEL_PLATFORM_FOLDER"
+
+        # KSUN must come from the official release tag and remain unmodified.
+        # The workflow matrix resolves v3.4.1 to this upstream commit; accept
+        # only the tag name or its exact commit so forks/other refs cannot slip in.
+        KSUN_TAG="v3.4.1"
+        KSUN_COMMIT="8f902aeb16033024143ae36cf711df902cf02fae"
         REQUESTED_KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
-        SUSFS_VERSION_FOR_KSUN=""
-        if [ "${{ env.OP_SUSFS }}" = "true" ]; then
-          SUSFS_VERSION_FOR_KSUN="$(grep '#define SUSFS_VERSION' "$SUSFS_FOLDER/kernel_patches/include/linux/susfs.h" | awk -F'"' '{print $2}' || true)"
+        if [[ "$REQUESTED_KSU_INPUT" != "$KSUN_TAG" && "$REQUESTED_KSU_INPUT" != "$KSUN_COMMIT" ]]; then
+          echo "::error::KSUN is pinned to official KernelSU-Next v3.4.1 ($KSUN_COMMIT); refusing non-stock ref '$REQUESTED_KSU_INPUT'."
+          exit 1
         fi
 
-        if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
-          # SUSFS v2.3.0 is integrated into pershoot's KSUN dev-susfs branch.
-          # Do not combine that integration with the legacy 10_enable_susfs patch.
-          echo "::notice::SUSFS v2.3.0: using pershoot/KernelSU-Next dev-susfs with built-in SUSFS integration."
-          if [ -n "$REQUESTED_KSU_INPUT" ] && [ "$REQUESTED_KSU_INPUT" != "v3.3.0" ]; then
-            echo "::warning::The requested KSUN ref ($REQUESTED_KSU_INPUT) is overridden for SUSFS v2.3.0; using the compatible dev-susfs branch."
-          fi
-          KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')" || true
-          if [[ ! "$KSU_INPUT" =~ ^[[:xdigit:]]{40}$ ]]; then
-            echo "::error::Could not resolve pershoot/KernelSU-Next dev-susfs to a commit SHA"
-            exit 1
-          fi
-          echo "Using pershoot/KernelSU-Next commit: $KSU_INPUT"
-          echo "KSU_SOURCE_REF=pershoot/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
-          curl --fail --location --proto '=https' -LSs \
-            "https://raw.githubusercontent.com/pershoot/KernelSU-Next/$KSU_INPUT/kernel/setup.sh" \
-            | bash -s "$KSU_INPUT"
-        else
-          KSU_INPUT="$REQUESTED_KSU_INPUT"
-          if [ -z "$KSU_INPUT" ]; then
-            KSU_INPUT="3b18216f71df189ab3d1b1ce0bdb21be1268e771"
-          fi
-          echo "KSU_SOURCE_REF=KernelSU-Next/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
-          curl --fail --location --proto '=https' -LSs \
-            "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/3b18216f71df189ab3d1b1ce0bdb21be1268e771/kernel/setup.sh" \
-            | bash -s "$KSU_INPUT"
-        fi
+        # Use the setup script shipped in the same upstream commit. It links
+        # KernelSU-Next into the kernel tree using the official integration.
+        curl --fail --location --proto '=https' -LSs \
+          "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/$KSUN_COMMIT/kernel/setup.sh" \
+          | bash -s "$KSUN_COMMIT"
+
         git -C KernelSU-Next submodule update --init --recursive
-        cd KernelSU-Next/kernel
-
-        commits_count="$(git rev-list --count HEAD)"
-        if [ "$commits_count" -lt 2684 ]; then
-          base_version=10200
-        else
-          base_version=30000
+        KSUN_ACTUAL_COMMIT="$(git -C KernelSU-Next rev-parse HEAD)"
+        if [[ "$KSUN_ACTUAL_COMMIT" != "$KSUN_COMMIT" ]]; then
+          echo "::error::KSUN checkout mismatch: expected $KSUN_COMMIT, got $KSUN_ACTUAL_COMMIT"
+          exit 1
         fi
-        KSU_VERSION="$((commits_count + base_version))"
-        sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" Makefile
-
-        if [ -f ksu.c ]; then
-          sed -i 's/#if defined(CONFIG_STACKPROTECTOR) && (defined(CONFIG_ARM64) && !defined(CONFIG_STACKPROTECTOR_PER_TASK))/#if 0/' ksu.c
+        if [[ "$(git -C KernelSU-Next describe --exact-match --tags HEAD)" != "$KSUN_TAG" ]]; then
+          echo "::error::KSUN checkout is not the official $KSUN_TAG release tag."
+          exit 1
         fi
-        if [ "$KSU_VERSION" -gt 33095 ] && [ "${{ env.KERNEL_VER }}" = "6.12" ]; then
-          sed -i 's|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include|ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include -I$(KSU_KERNEL_DIR)/include/uapi|' Kbuild
-          sed -i 's|$(src)|$(abspath $(src))|' Kbuild
-          sed -i 's|$(srctree)/$(src)|$(abspath $(srctree)/$(src))|' Kbuild
+        if [[ -n "$(git -C KernelSU-Next status --porcelain --untracked-files=no)" ]]; then
+          echo "::error::KSUN upstream source tree is modified before integration."
+          git -C KernelSU-Next status --short
+          exit 1
         fi
 
-        KSU_COMMIT_SHA="$(git rev-parse HEAD)"
+        KSU_COMMIT_SHA="$KSUN_ACTUAL_COMMIT"
         echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA" >> "$GITHUB_ENV"
+        echo "KSU_SOURCE_REF=KernelSU-Next/KernelSU-Next@$KSUN_TAG ($KSUN_COMMIT)" >> "$GITHUB_ENV"
         echo "NEED_HOOKS=false" >> "$GITHUB_ENV"
+
+        # Match the stock v3.4.1 Kbuild version formula for build metadata.
+        # Do not rewrite DKSU_VERSION or patch KSUN C/Kbuild files locally.
+        cd KernelSU-Next/kernel
+        KSUN_COMMIT_COUNT="$(git rev-list --count HEAD)"
+        KSU_VERSION="$((30000 + KSUN_COMMIT_COUNT))"
+        echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
+        printf '%s\n%s\n' "KSUN" "$KSU_VERSION" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
+
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
         CONFIG_KSU=y
-        CONFIG_KSU_KPROBES_HOOK=n
         EOF
 
-        printf '%s\n%s\n' "KSUN" "$KSU_VERSION" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
-        echo "KSUVER=$KSU_VERSION" >> "$GITHUB_ENV"
-        echo "KernelSU Next Version: $KSU_VERSION"
-        echo "✅ KernelSU Next added (commit: ${KSU_COMMIT_SHA:0:8})"
+        echo "KernelSU Next stock tag: $KSUN_TAG"
+        echo "KernelSU Next commit: $KSU_COMMIT_SHA"
+        echo "KernelSU Next version code (stock formula): $KSU_VERSION"
         echo "::endgroup::"
 
     - name: Add ReSukiSU (The Sukisaku Project)
@@ -1337,12 +1325,8 @@ runs:
             fi
             ;;
           "v2.3.0")
-            if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              echo "::notice::SUSFS v2.3.0 is integrated into pershoot/KernelSU-Next dev-susfs; skipping legacy KSUN compatibility patches."
-            else
-              echo "::error::SUSFS v2.3.0 is configured here for KSUN via dev-susfs; other KSU variants need their own compatibility patches."
-              exit 1
-            fi
+            echo "::error::SUSFS v2.3.0 currently relies on this workflow's non-stock pershoot/KernelSU-Next dev-susfs integration. This workflow now enforces official stock KSUN v3.4.1 and will not switch forks or claim unverified compatibility. Use the tested v2.2.0 compatibility path or disable SUSFS until a separate stock-source v2.3.0 patch series is validated."
+            exit 1
             ;;
           *)
             echo "::error::Unsupported SUSFS version: $susfs_version"
