@@ -1531,6 +1531,16 @@ runs:
             fi
           fi
         fi
+        # KernelSU-Next dev-susfs v2.3.0 can leave fake_state references in
+        # services.c on Android 13 / kernel 5.15. Detect this explicitly so
+        # the build fails with a useful diagnostic instead of at final link.
+        if [ "$susfs_version" = "v2.3.0" ] && [ "${{ inputs.ksu_type }}" = "KSUN" ] && \
+           [ "$ANDROID_VER" = "android13" ] && [ "$KERNEL_VER" = "5.15" ]; then
+          if grep -q "fake_state" "$COMMON_KERNEL_FOLDER/security/selinux/ss/services.c"; then
+            echo "::error::SUSFS v2.3.0 + KernelSU-Next dev-susfs has unresolved fake_state references for Android 13 / kernel 5.15. Reconcile the SELinux-hide integration before building."
+            exit 1
+          fi
+        fi
         echo "✅ SUSFS patches applied"
 
         echo "Add SUSFS Configuration Settings"
