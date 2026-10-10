@@ -1581,15 +1581,15 @@ runs:
         # SUSFS v2.3.0's Android 13 / 5.15 services.c patch references a
         # global fake_state. The current KSUN dev-susfs source omits it because
         # its hide implementation normally uses *_with_policy() APIs instead.
-        declaration_marker = "bool ksu_selinux_hide_running __read_mostly = false;\\n"
+        declaration_marker = "bool ksu_selinux_hide_running __read_mostly = false;\n"
         declaration = (
-            "#ifdef CONFIG_KSU_SUSFS\\n"
-            "/* Compatibility for the Android 13 / 5.15 SUSFS v2.3.0 SELinux hooks. */\\n"
-            "struct selinux_state fake_state;\\n"
-            "#endif\\n"
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "/* Compatibility for the Android 13 / 5.15 SUSFS v2.3.0 SELinux hooks. */\n"
+            "struct selinux_state fake_state;\n"
+            "#endif\n"
         )
         if re.search(r"(?m)^struct selinux_state fake_state;$", text) is None:
-            if re.search(r"(?m)^\\s*static\\s+struct selinux_state fake_state;", text):
+            if re.search(r"(?m)^\s*static\s+struct selinux_state fake_state;", text):
                 sys.exit("KSUN fake_state exists but is static; it cannot satisfy services.c")
             if "struct selinux_state fake_state;" in text:
                 sys.exit("KSUN has an unexpected fake_state declaration; refusing to modify it")
@@ -1597,17 +1597,16 @@ runs:
                 sys.exit("Unexpected KSUN selinux_hide.c declaration layout; refusing fake_state integration")
             text = text.replace(declaration_marker, declaration_marker + declaration, 1)
 
-        enable_marker = (
-            "    if (!backup_sepolicy) {\\n"
-            "        pr_err(\\\"no backup sepolicy available, please save feature and reboot to retry!\\\\n\\");\\n"
-            "        return -EAGAIN;\\n"
-            "    }\\n"
-        )
+        enable_marker = r'''    if (!backup_sepolicy) {
+        pr_err("no backup sepolicy available, please save feature and reboot to retry!\n");
+        return -EAGAIN;
+    }
+'''
         enable_bridge = (
-            "#ifdef CONFIG_KSU_SUSFS\\n"
-            "    fake_state.policy = backup_sepolicy;\\n"
-            "    fake_state.initialized = true;\\n"
-            "#endif\\n"
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "    fake_state.policy = backup_sepolicy;\n"
+            "    fake_state.initialized = true;\n"
+            "#endif\n"
         )
         if "fake_state.policy = backup_sepolicy;" not in text:
             if text.count(enable_marker) != 1:
@@ -1619,12 +1618,13 @@ runs:
         if len(drop_parts) != 2:
             sys.exit("KSUN backup-policy cleanup function not found; refusing unsafe fake_state integration")
         drop_body = drop_parts[1]
-        drop_marker = '        pr_info("selinux_hide is not enabled - drop backup_sepolicy\\n");\\n'
+        drop_marker = r'''        pr_info("selinux_hide is not enabled - drop backup_sepolicy\n");
+'''
         drop_bridge = (
-            "#ifdef CONFIG_KSU_SUSFS\\n"
-            "        fake_state.initialized = false;\\n"
-            "        fake_state.policy = NULL;\\n"
-            "#endif\\n"
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "        fake_state.initialized = false;\n"
+            "        fake_state.policy = NULL;\n"
+            "#endif\n"
         )
         if "fake_state.policy = NULL;" not in drop_body:
             if text.count(drop_marker) != 1:
