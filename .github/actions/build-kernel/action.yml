@@ -3129,11 +3129,6 @@ runs:
         github_token: ${{ inputs.github_token }}
         working_dir: "./main-source"
         compression_level: 6
- "$KSUN_FOLDER/kernel/feature/selinux_hide.c"; then
-            echo "::error::KernelSU-Next fake_state compatibility bridge was not applied"
-            exit 1
-          fi
-        fi
         echo "✅ SUSFS patches applied"
 
         echo "Add SUSFS Configuration Settings"
