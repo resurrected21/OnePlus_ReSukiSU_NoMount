@@ -1532,75 +1532,81 @@ runs:
           fi
         fi
         # SUSFS v2.3.0 patches hooks.c and selinuxfs.c with legacy SELinux-hide
-        # callbacks that use an exported fake_state. Current KernelSU-Next
-        # dev-susfs omits that state when CONFIG_KSU_SUSFS=y, so provide it
-        # only for this verified Android 13 / kernel 5.15 integration.
+        # callbacks that expect a global fake_state. Current KernelSU-Next dev-susfs
+        # omits that state under CONFIG_KSU_SUSFS, so provide it only for the verified
+        # Android 13 / kernel 5.15 combination, backed by the preserved SELinux policy.
         if [ "$susfs_version" = "v2.3.0" ] && [ "${{ inputs.ksu_type }}" = "KSUN" ] && \
            [ "$ANDROID_VER" = "android13" ] && [ "$KERNEL_VER" = "5.15" ]; then
-          python3 - <<'PY'
-from pathlib import Path
-import os
-import sys
+        python3 - <<'PY'
+        from pathlib import Path
+        import os
+        import sys
 
-source = Path(os.environ["KSUN_FOLDER"]) / "kernel/feature/selinux_hide.c"
-text = source.read_text()
+        source = Path(os.environ["KSUN_FOLDER"]) / "kernel/feature/selinux_hide.c"
+        text = source.read_text()
 
-declaration_marker = "bool ksu_selinux_hide_running __read_mostly = false;\n"
-declaration = (
-    "#ifdef CONFIG_KSU_SUSFS\n"
-    "/* Compatibility state for the SUSFS v2.3.0 SELinux hooks. */\n"
-    "struct selinux_state fake_state;\n"
-    "#endif\n"
-)
-if "struct selinux_state fake_state;" not in text:
-    if text.count(declaration_marker) != 1:
-        sys.exit("::error::Unexpected KernelSU-Next selinux_hide.c declaration layout; fake_state bridge not applied")
-    text = text.replace(declaration_marker, declaration_marker + declaration, 1)
+        declaration_marker = "bool ksu_selinux_hide_running __read_mostly = false;\n"
+        declaration = (
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "/* Compatibility state for the SUSFS v2.3.0 SELinux hooks. */\n"
+            "struct selinux_state fake_state;\n"
+            "#endif\n"
+        )
+        if "struct selinux_state fake_state;" not in text:
+            if text.count(declaration_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next selinux_hide.c declaration layout; refusing fake_state patch")
+            text = text.replace(declaration_marker, declaration_marker + declaration, 1)
 
-enable_marker = (
-    "    if (!backup_sepolicy) {\n"
-    "        pr_err(\"no backup sepolicy available, please save feature and reboot to retry!\\n\");\n"
-    "        return -EAGAIN;\n"
-    "    }\n"
-)
-enable_bridge = (
-    "#ifdef CONFIG_KSU_SUSFS\n"
-    "    RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);\n"
-    "    selinux_mark_initialized(&fake_state);\n"
-    "#endif\n"
-)
-if "RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);" not in text:
-    if text.count(enable_marker) != 1:
-        sys.exit("::error::Unexpected KernelSU-Next selinux_hide.c enable layout; fake_state initialization not applied")
-    text = text.replace(enable_marker, enable_marker + enable_bridge, 1)
+        enable_marker = (
+            "    if (!backup_sepolicy) {\n"
+            "        pr_err(\"no backup sepolicy available, please save feature and reboot to retry!\\n\");\n"
+            "        return -EAGAIN;\n"
+            "    }\n"
+        )
+        enable_bridge = (
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "    RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);\n"
+            "    selinux_mark_initialized(&fake_state);\n"
+            "#endif\n"
+        )
+        if "RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);" not in text:
+            if text.count(enable_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next selinux_hide.c enable layout; refusing fake_state initialization")
+            text = text.replace(enable_marker, enable_marker + enable_bridge, 1)
 
-exit_marker = "void __exit ksu_selinux_hide_exit()\n{\n"
-exit_bridge = (
-    "#ifdef CONFIG_KSU_SUSFS\n"
-    "    RCU_INIT_POINTER(fake_state.policy, NULL);\n"
-    "    fake_state.initialized = false;\n"
-    "#endif\n"
-)
-if "RCU_INIT_POINTER(fake_state.policy, NULL);" not in text:
-    if text.count(exit_marker) != 1:
-        sys.exit("::error::Unexpected KernelSU-Next selinux_hide.c exit layout; fake_state cleanup not applied")
-    text = text.replace(exit_marker, exit_marker + exit_bridge, 1)
+        exit_marker = "    mutex_unlock(&selinux_hide_mutex);\n    ksu_unregister_feature_handler(KSU_FEATURE_SELINUX_HIDE);\n"
+        exit_bridge = (
+            "    mutex_unlock(&selinux_hide_mutex);\n"
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "    RCU_INIT_POINTER(fake_state.policy, NULL);\n"
+            "    fake_state.initialized = false;\n"
+            "#endif\n"
+            "    ksu_unregister_feature_handler(KSU_FEATURE_SELINUX_HIDE);\n"
+        )
+        if "fake_state.initialized = false;" not in text:
+            if text.count(exit_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next selinux_hide.c exit layout; refusing fake_state cleanup")
+            text = text.replace(exit_marker, exit_bridge, 1)
 
-drop_marker = "    if (!ksu_selinux_hide_running && backup_sepolicy) {\n"
-drop_bridge = (
-    "        #ifdef CONFIG_KSU_SUSFS\n"
-    "        RCU_INIT_POINTER(fake_state.policy, NULL);\n"
-    "        fake_state.initialized = false;\n"
-    "        #endif\n"
-)
-if "RCU_INIT_POINTER(fake_state.policy, NULL);" not in text:
-    if text.count(drop_marker) != 1:
-        sys.exit("::error::Unexpected KernelSU-Next backup-drop layout; fake_state cleanup not applied")
-    text = text.replace(drop_marker, drop_bridge + drop_marker, 1)
+        drop_marker = '        pr_info("selinux_hide is not enabled - drop backup_sepolicy\\n");\n'
+        drop_bridge = (
+            "#ifdef CONFIG_KSU_SUSFS\n"
+            "        RCU_INIT_POINTER(fake_state.policy, NULL);\n"
+            "        fake_state.initialized = false;\n"
+            "#endif\n"
+        )
+        if "drop backup_sepolicy" in text and "RCU_INIT_POINTER(fake_state.policy, NULL);" not in text.split("void ksu_selinux_hide_drop_backup_if_unused()", 1)[-1]:
+            if text.count(drop_marker) != 1:
+                sys.exit("Unexpected KernelSU-Next backup-drop layout; refusing fake_state cleanup")
+            text = text.replace(drop_marker, drop_marker + drop_bridge, 1)
 
-source.write_text(text)
-PY
-          if ! grep -q '^struct selinux_state fake_state;        echo "✅ SUSFS patches applied"
+        if text.count("struct selinux_state fake_state;") != 1 or "RCU_INIT_POINTER(fake_state.policy, backup_sepolicy);" not in text:
+            sys.exit("fake_state compatibility bridge verification failed")
+        source.write_text(text)
+        PY
+        fi
+
+        echo "✅ SUSFS patches applied"
 
         echo "Add SUSFS Configuration Settings"
         cat >> "$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig" <<EOF
