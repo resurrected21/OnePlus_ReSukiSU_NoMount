@@ -1053,22 +1053,38 @@ runs:
         fi
 
         if [ "$SUSFS_VERSION_FOR_KSUN" = "v2.3.0" ]; then
-          # SUSFS v2.3.0 is integrated into pershoot's KSUN dev-susfs branch.
+          # Official KSUN v3.4.1 keeps the SELinux-hide symbols that the SUSFS
+          # v2.3.0 kernel patch references (fake_state, fake_status,
+          # fake_status_initialize_key, ksu_selinux_hide_running) static and
+          # has no SUSFS integration, so it cannot link with SUSFS v2.3.0.
+          # pershoot's dev-susfs adds exactly that on top of v3.4.1. Pin the
+          # last validated commit: official v3.4.1 (8f902aeb) + 8 SUSFS v2.3.0
+          # integration commits. dev-susfs is rebased often; never float it.
           # Do not combine that integration with the legacy 10_enable_susfs patch.
-          echo "::notice::SUSFS v2.3.0: using pershoot/KernelSU-Next dev-susfs with built-in SUSFS integration."
-          if [ -n "$REQUESTED_KSU_INPUT" ] && [ "$REQUESTED_KSU_INPUT" != "v3.3.0" ]; then
-            echo "::warning::The requested KSUN ref ($REQUESTED_KSU_INPUT) is overridden for SUSFS v2.3.0; using the compatible dev-susfs branch."
-          fi
-          KSU_INPUT="$(git ls-remote https://github.com/pershoot/KernelSU-Next.git refs/heads/dev-susfs | awk 'NR == 1 {print $1}')" || true
-          if [[ ! "$KSU_INPUT" =~ ^[[:xdigit:]]{40}$ ]]; then
-            echo "::error::Could not resolve pershoot/KernelSU-Next dev-susfs to a commit SHA"
-            exit 1
-          fi
-          echo "Using pershoot/KernelSU-Next commit: $KSU_INPUT"
+          KSUN_V341_SHA="8f902aeb16033024143ae36cf711df902cf02fae"
+          KSU_INPUT="94fab777831ee864d6ae9c520fa74ab4e643f3e0"
+          case "$REQUESTED_KSU_INPUT" in
+            ""|v3.4.1|"$KSUN_V341_SHA") ;;
+            *) echo "::warning::The requested KSUN ref ($REQUESTED_KSU_INPUT) is overridden for SUSFS v2.3.0; using KSUN v3.4.1 + SUSFS v2.3.0 (pershoot@${KSU_INPUT:0:8})." ;;
+          esac
+          echo "::notice::SUSFS v2.3.0: using KSUN v3.4.1 with SUSFS v2.3.0 integration (pershoot/KernelSU-Next@${KSU_INPUT:0:8})."
           echo "KSU_SOURCE_REF=pershoot/KernelSU-Next@$KSU_INPUT" >> "$GITHUB_ENV"
           curl --fail --location --proto '=https' -LSs \
             "https://raw.githubusercontent.com/pershoot/KernelSU-Next/$KSU_INPUT/kernel/setup.sh" \
             | bash -s "$KSU_INPUT"
+          # The pinned commit is no longer on a pershoot branch (dev-susfs was
+          # rebased), so a plain clone lacks it and setup.sh silently stays on
+          # the default branch. Fetch it by SHA and check it out explicitly.
+          git -C KernelSU-Next fetch --no-tags origin "$KSU_INPUT"
+          git -C KernelSU-Next checkout --detach "$KSU_INPUT"
+          if [ "$(git -C KernelSU-Next rev-parse HEAD)" != "$KSU_INPUT" ]; then
+            echo "::error::KernelSU-Next is not at pinned commit $KSU_INPUT"
+            exit 1
+          fi
+          if ! git -C KernelSU-Next merge-base --is-ancestor "$KSUN_V341_SHA" HEAD; then
+            echo "::error::Pinned KernelSU-Next commit is not based on official v3.4.1"
+            exit 1
+          fi
         else
           KSU_INPUT="$REQUESTED_KSU_INPUT"
           if [ -z "$KSU_INPUT" ]; then
@@ -1338,7 +1354,7 @@ runs:
             ;;
           "v2.3.0")
             if [ "${{ inputs.ksu_type }}" = "KSUN" ]; then
-              echo "::notice::SUSFS v2.3.0 is integrated into pershoot/KernelSU-Next dev-susfs; skipping legacy KSUN compatibility patches."
+              echo "::notice::SUSFS v2.3.0 is integrated into the pinned KSUN v3.4.1 SUSFS source; skipping legacy KSUN compatibility patches."
             else
               echo "::error::SUSFS v2.3.0 is configured here for KSUN via dev-susfs; other KSU variants need their own compatibility patches."
               exit 1
