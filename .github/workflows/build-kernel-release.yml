@@ -44,9 +44,9 @@ on:
           - KSU
         default: KSUN
       ksu_branch_or_hash:
-        description: 'KSU branch/tag/hash. For KSUN + SUSFS v2.3.0, the build selects the latest compatible pershoot/dev-susfs commit automatically.'
+        description: 'KSU branch/tag/hash. For KSUN + SUSFS v2.3.0, KSUN v3.4.1 with pinned SUSFS v2.3.0 integration (pershoot@94fab777) is always used.'
         type: string
-        default: 'v3.4.0'
+        default: 'v3.4.1'
       optimize_level:
         description: "Compiler optimization level"
         required: true
@@ -76,9 +76,9 @@ on:
         type: string
         default: ''
       android13-5_15_susfs_branch_or_commit:
-        description: 'Leave blank to use the latest commit on gki-android13-5.15, or enter a branch/commit'
+        description: 'SUSFS v2.3.0 commit validated with KSUN v3.4.1 (pershoot@94fab777). Clear to use the latest gki-android13-5.15 commit, or enter a branch/commit'
         type: string
-        default: ''
+        default: '687d2d18d94cb2e3e72d1074778d58384d58e379'
       android14-6_1_susfs_branch_or_commit:
         description: 'Leave blank to use the latest commit on gki-android14-6.1, or enter a branch/commit'
         type: string
@@ -962,13 +962,13 @@ jobs:
           case "${{ inputs.ksu_type }}" in
             KSUN)
               download_and_verify \
-                "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.3.0/KernelSU_Next_v3.3.0_33214-release.apk" \
-                "KernelSU_Next_v3.3.0_33214-release.apk" \
-                "fd0b12385c98fe9d5f4f1257b5f184e55c74c1376637507df0718305f5d7a924"
+                "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.4.1/KernelSU_Next_v3.4.1_33333-release.apk" \
+                "KernelSU_Next_v3.4.1_33333-release.apk" \
+                "eff4b9df6dc438a3fee3b298e4fb87843e7c95f16b6daabdd3161d51968ba2ff"
               download_and_verify \
-                "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.3.0/KernelSU_Next_v3.3.0-spoofed_33214-release.apk" \
-                "KernelSU_Next_v3.3.0-spoofed_33214-release.apk" \
-                "773d99e256563d36f8543235c96274021c59cf65efed783170bbc7effdf24ee3"
+                "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.4.1/KernelSU_Next_v3.4.1-spoofed_33333-release.apk" \
+                "KernelSU_Next_v3.4.1-spoofed_33333-release.apk" \
+                "f41778ee812512ae96bf53e7265114de5e0414bc5cb92397f49e1052d77da118"
               ;;
             ReSukiSU)
               download_and_verify \
@@ -1137,7 +1137,7 @@ jobs:
             exit 1
           fi
           case "$ksu_type" in
-            KSUN) root_release_label="KernelSU Next v3.3.0" ;;
+            KSUN) root_release_label="KernelSU Next v3.4.1" ;;
             ReSukiSU) root_release_label="ReSukiSU $ksu_ver_global" ;;
             KSU) root_release_label="KernelSU $ksu_ver_global" ;;
           esac
@@ -1262,8 +1262,8 @@ jobs:
           if [ "$ksu_type" == "KSUN" ]; then
             cat << EOF >> release_notes.md
           - **KernelSU Next Manager**
-            → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases/tag/v3.3.0)
-          - **Included release assets:** normal and spoofed KernelSU Next v3.3.0 managers plus the verified NoMount flashable ZIP.
+            → [GitHub Release](https://github.com/KernelSU-Next/KernelSU-Next/releases/tag/v3.4.1)
+          - **Included release assets:** normal and spoofed KernelSU Next v3.4.1 managers plus the verified NoMount flashable ZIP.
           EOF
           elif [ "$ksu_type" == "ReSukiSU" ]; then
             cat << EOF >> release_notes.md
